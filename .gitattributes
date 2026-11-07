@@ -1,0 +1,24 @@
+# Finales de línea: el código corre en Linux (contenedores y EC2), pero se edita en Windows.
+# Todo archivo de texto se guarda en el repositorio con LF y se entrega con LF,
+# sin importar la configuración core.autocrlf de cada integrante.
+* text=auto eol=lf
+
+# Scripts de Windows sí necesitan CRLF
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binarios: sin conversión ni diff de texto
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.zip  binary
+*.gz   binary
+*.tar  binary
+*.bin  binary

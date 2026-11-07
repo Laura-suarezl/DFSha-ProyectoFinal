@@ -1,0 +1,187 @@
+# ---------------------------------------------------------------------
+# 1. Secretos y credenciales
+# ---------------------------------------------------------------------
+# Llaves SSH y del laboratorio (labsuser.pem, vockey)
+*.pem
+*.ppk
+id_rsa*
+id_ed25519*
+# Certificados y llaves de la CA interna (se generan con deploy/certs/)
+*.key
+*.crt
+*.csr
+*.srl
+*.p12
+*.pfx
+*.jks
+deploy/certs/out/
+# Variables de entorno y credenciales de AWS
+.env
+.env.*
+!.env.example
+.aws/
+credentials
+*.credentials
+# Claves de firma de JWT y de tokens de bloque
+secrets/
+*.secret
+jwt-*.key
+hmac-*.key
+
+# ---------------------------------------------------------------------
+# 2. Python
+# ---------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+.python-version
+# Empaquetado
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+*.egg
+MANIFEST
+# Pruebas, cobertura y análisis estático
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.hypothesis/
+# Notebooks
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------
+# 3. Código generado desde los .proto (se regenera con el script del proyecto)
+# ---------------------------------------------------------------------
+dfsha/_gen/
+
+# ---------------------------------------------------------------------
+# 4. Datos de ejecución, pruebas y despliegue
+# ---------------------------------------------------------------------
+# Bloques, temporales y datos de etcd de los contenedores locales
+data/
+deploy/compose/data/
+*.part
+*.tmp
+# Archivos de prueba pesados (16 MB, 128 MB, 1 GB); se generan con los scripts
+experiments/inputs/
+*.bin
+*.img
+# Resultados crudos de los experimentos (los resúmenes sí se versionan)
+experiments/results/raw/
+# Registros
+*.log
+logs/
+# Imágenes Docker exportadas para el despliegue
+*.tar
+*.tar.gz
+# Salidas locales de AWS CLI (ids de recursos creados, estado del despliegue)
+deploy/aws/out/
+
+# ---------------------------------------------------------------------
+# 5. Sistemas operativos
+# ---------------------------------------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ---------------------------------------------------------------------
+# 6. IDEs y editores de texto
+# ---------------------------------------------------------------------
+# Visual Studio Code (se comparte solo la lista de extensiones recomendadas)
+.vscode/*
+!.vscode/extensions.json
+*.code-workspace
+.history/
+# JetBrains (PyCharm, IntelliJ, ...)
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+# Visual Studio
+.vs/
+*.suo
+*.user
+# Eclipse / PyDev
+.project
+.pydevproject
+.settings/
+.metadata/
+# NetBeans
+nbproject/
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+# Vim
+*.swp
+*.swo
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+Sessionx.vim
+.netrwhist
+tags
+# Emacs
+\#*\#
+.\#*
+*.elc
+auto-save-list/
+.projectile
+# Nano
+*.save
+# Asistentes de código y herramientas locales
+.claude/
+
+# ---------------------------------------------------------------------
+# 7. Documentos de oficina abiertos (archivos de bloqueo temporales)
+# ---------------------------------------------------------------------
+~$*
+.~lock.*#
