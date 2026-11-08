@@ -1,9 +1,13 @@
 """Prueba de humo del entorno local de desarrollo (deploy/compose/docker-compose.dev.yml).
 
-Desde el equipo anfitrión escribe un bloque de 16 MiB en dn1 con la cadena dn1, dn2 y dn3. Dentro
-de la red de Docker, dn1 lo reenvía a dn2.dfsha.internal y dn3.dfsha.internal por sus puertos
-internos con TLS mutuo. Luego lee el bloque desde cada nodo y comprueba que los puertos internos
-no se alcanzan desde fuera de la red.
+Nodos de metadatos. Crea un administrador de prueba con contraseña aleatoria (crear-admin dentro
+de mds1), busca al líder siguiendo las respuestas NOT_LEADER, inicia sesión, crea un usuario,
+comprueba que ese usuario no puede administrar y renueva la sesión.
+
+Nodos de datos. Desde el equipo anfitrión escribe un bloque de 16 MiB en dn1 con la cadena dn1,
+dn2 y dn3. Dentro de la red de Docker, dn1 lo reenvía a dn2.dfsha.internal y dn3.dfsha.internal
+por sus puertos internos con TLS mutuo. Luego lee el bloque desde cada nodo y comprueba que los
+puertos internos no se alcanzan desde fuera de la red.
 
 Uso:  python deploy/compose/prueba_humo.py
 Requiere los certificados de deploy/certs/out (crear_certificados.py --local) y el Compose arriba.
@@ -13,8 +17,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import secrets
 import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import grpc
@@ -25,15 +32,86 @@ sys.path.insert(0, str(RAIZ))
 from dfsha._gen import dfsha_pb2 as pb  # noqa: E402
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc  # noqa: E402
 from dfsha.common.config import Tls  # noqa: E402
+from dfsha.common.errores import detalle_de, motivo_de  # noqa: E402
 from dfsha.common.tls import credenciales_canal  # noqa: E402
 
 CA = RAIZ / "deploy" / "certs" / "out" / "ca.crt"
-PUBLICADOS = {"dn1": 51052, "dn2": 51053, "dn3": 51054, "dn4": 51055}   # puertos de clientes en el anfitrión
+COMPOSE = RAIZ / "deploy" / "compose" / "docker-compose.dev.yml"
+PUBLICADOS = {"mds1": 51041, "mds2": 51042, "mds3": 51043,             # puertos de clientes en el anfitrión
+              "dn1": 51052, "dn2": 51053, "dn3": 51054, "dn4": 51055}
 MIB = 1024 * 1024
+GIB = 1024 * MIB
 
 
 def canal(nodo: str) -> grpc.aio.Channel:
     return grpc.aio.secure_channel(f"127.0.0.1:{PUBLICADOS[nodo]}", credenciales_canal(Tls(ca=str(CA))))
+
+
+def crear_admin(usuario: str, contrasena: str) -> None:
+    subprocess.run(["docker", "compose", "-f", str(COMPOSE), "exec", "-T", "-e", f"DFSHA_CONTRASENA={contrasena}",
+                    "mds1", "python", "-m", "dfsha.metadata", "crear-admin", "--usuario", usuario],
+                   check=True, capture_output=True)
+
+
+async def buscar_lider(usuario: str, contrasena: str, espera_s: float = 60) -> tuple[str, pb.LoginResponse]:
+    """Inicia sesión en mds1 y sigue la respuesta NOT_LEADER hasta el líder.
+
+    Si un nodo no responde (por ejemplo, está detenido), prueba con el siguiente.
+    """
+    candidatos = ["mds1", "mds2", "mds3"]
+    nodo, limite = "mds1", time.monotonic() + espera_s
+    while True:
+        try:
+            async with canal(nodo) as c:
+                r = await pb_grpc.MetadataServiceStub(c).Login(pb.LoginRequest(username=usuario, password=contrasena))
+            return nodo, r
+        except grpc.aio.AioRpcError as e:
+            if motivo_de(e) == "NOT_LEADER":
+                nodo = detalle_de(e).leader.split(".", 1)[0]          # mds2.dfsha.internal es mds2
+                continue
+            if time.monotonic() > limite:
+                raise
+            nodo = candidatos[(candidatos.index(nodo) + 1) % 3]        # caído o aún arrancando
+            await asyncio.sleep(1)
+
+
+async def probar_metadatos(fallas: list[str]) -> None:
+    admin, contrasena = f"humo{secrets.token_hex(3)}", secrets.token_urlsafe(16)
+    crear_admin(admin, contrasena)
+    lider, sesion = await buscar_lider(admin, contrasena)
+    print(f"Líder de metadatos: {lider}, sesión {sesion.session_id} iniciada por {admin}")
+    token = (("authorization", f"Bearer {sesion.access_token}"),)
+
+    async with canal(lider) as c:
+        meta, adm = pb_grpc.MetadataServiceStub(c), pb_grpc.AdminServiceStub(c)
+        usuario, clave = f"ana{secrets.token_hex(3)}", secrets.token_urlsafe(16)
+        await adm.CreateUser(pb.CreateUserRequest(username=usuario, password=clave, quota_bytes=GIB), metadata=token)
+        r = await meta.Login(pb.LoginRequest(username=usuario, password=clave))
+        print(f"Usuario {usuario} creado e inicia sesión: {bool(r.access_token)}")
+        try:
+            await adm.CreateUser(pb.CreateUserRequest(username="otro", password=clave),
+                                 metadata=(("authorization", f"Bearer {r.access_token}"),))
+            motivo = "permitido"
+        except grpc.aio.AioRpcError as e:
+            motivo = motivo_de(e)
+        print(f"Un usuario sin rol administrador intenta crear usuarios: {motivo}")
+        if motivo != "FORBIDDEN":
+            fallas.append("un usuario sin rol administrador pudo administrar")
+        renovada = await meta.Renew(pb.RenewRequest(session_id=sesion.session_id), metadata=token)
+        print(f"Renew de la sesión: le quedan {renovada.ttl_s} s")
+        if renovada.ttl_s <= 0:
+            fallas.append("la sesión no se renovó")
+
+    for seguidor in sorted({"mds1", "mds2", "mds3"} - {lider}):
+        async with canal(seguidor) as c:
+            try:
+                await pb_grpc.MetadataServiceStub(c).Login(pb.LoginRequest(username=admin, password=contrasena))
+                respuesta = "atendió el Login"
+            except grpc.aio.AioRpcError as e:
+                respuesta = f"{motivo_de(e)} {detalle_de(e).leader if detalle_de(e) else ''}".strip()
+        print(f"{seguidor} responde: {respuesta}")
+        if respuesta != f"NOT_LEADER {lider}.dfsha.internal":
+            fallas.append(f"{seguidor} no remitió al líder")
 
 
 def trozos(block_id: str, datos: bytes, cadena_restante: list[str]):
@@ -61,6 +139,8 @@ async def main() -> int:
         async with canal(nodo) as c:
             await asyncio.wait_for(c.channel_ready(), 30)
 
+    await probar_metadatos(fallas)
+
     datos = os.urandom(16 * MIB)
     huella = hashlib.sha256(datos).hexdigest()
     block_id = f"b-{int.from_bytes(os.urandom(8), 'big'):016x}"
@@ -87,7 +167,7 @@ async def main() -> int:
     if salud.blocks[0].present:
         fallas.append("dn4 no debía tener el bloque")
 
-    for interno in (50054, 50053):
+    for interno in (50054, 50053, 2379):
         abierto = puerto_abierto(interno)
         print(f"Puerto interno {interno} alcanzable desde el anfitrión: {abierto}")
         if abierto:

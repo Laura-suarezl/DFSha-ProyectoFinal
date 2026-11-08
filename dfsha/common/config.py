@@ -46,7 +46,8 @@ class Cluster:
 class Etcd:
     destino: str = "dns:///dfsha.internal:2379"   # destino gRPC con los 3 miembros (D1)
     prefijo: str = "/dfsha/"
-    timeout_s: float = 5.0             # plazo de cada llamada a etcd
+    timeout_s: float = 5.0             # plazo total de cada llamada a etcd, reintentos incluidos
+    tls: bool = True                   # TLS mutuo con etcd usando el certificado del nodo (D8)
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class Tiempos:
     gracia_recolector_s: int = 60      # sin borrar bloques viejos tras un cambio de líder
     op_id_ttl_s: int = 3600            # vida del resultado de un commit (D3)
     jwt_ttl_s: int = 3600              # D8
+    token_renovacion_ttl_s: int = 86400  # vida del token de renovación (D8)
     token_bloque_ttl_s: int = 600      # token de acceso por bloque (D8)
     auditoria_ttl_s: int = 7 * 24 * 3600
 
@@ -90,7 +92,9 @@ class Limites:
 
 @dataclass(frozen=True)
 class Kms:
-    clave: str = "alias/dfsha-kek"     # clave maestra que envuelve las claves de archivo (D8)
+    # Clave maestra que envuelve las claves del clúster y las de archivo (D8). Un alias o id de
+    # KMS, o "archivo:<ruta>" para desarrollo local (clave de 32 bytes en un archivo).
+    clave: str = "alias/dfsha-kek"
     region: str = "us-east-1"
 
 

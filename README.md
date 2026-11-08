@@ -37,7 +37,7 @@ Python 3.12, gRPC (grpcio), etcd 3.5, cryptography, argon2-cffi, PyJWT, boto3, t
 
 ## Entorno local con Docker
 
-Para probar los servicios juntos en un solo computador hay un Compose de desarrollo con etcd y los nodos de datos, con TLS y los mismos nombres que en AWS. Cómo levantarlo y su prueba de humo están en [deploy/compose/README.md](deploy/compose/README.md).
+Para probar los servicios juntos en un solo computador hay un Compose de desarrollo con etcd, los nodos de metadatos y los nodos de datos, con TLS y los mismos nombres que en AWS. Cómo levantarlo y su prueba de humo están en [deploy/compose/README.md](deploy/compose/README.md).
 
 ## Instalación para desarrollo
 
@@ -49,7 +49,7 @@ python scripts/generar_codigo.py   # genera dfsha/_gen/ desde proto/ (repetir si
 pytest
 ```
 
-El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md), la API de DFSha en [docs/api.md](docs/api.md) los parámetros de configuración en [docs/configuracion.md](docs/configuracion.md) y el TLS, la CA interna y los puertos en [docs/tls.md](docs/tls.md).
+El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md), la API de DFSha en [docs/api.md](docs/api.md), el funcionamiento de los nodos de metadatos en [docs/metadatos.md](docs/metadatos.md), los parámetros de configuración en [docs/configuracion.md](docs/configuracion.md) y el TLS, la CA interna y los puertos en [docs/tls.md](docs/tls.md).
 
 Las pruebas de integración necesitan un etcd en marcha y se saltan si no está configurado. Cómo ejecutarlas está en [prototipos/etcd-cluster/README.md](prototipos/etcd-cluster/README.md).
 

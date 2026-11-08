@@ -26,6 +26,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `etcd.destino` | `dns:///dfsha.internal:2379` | Destino gRPC con los 3 miembros de etcd | D1 |
 | `etcd.prefijo` | `/dfsha/` | Prefijo de todas las claves | Esquema de etcd |
 | `etcd.timeout_s` | 5 | Plazo total de cada llamada a etcd, reintentos incluidos | D1 |
+| `etcd.tls` | `true` | TLS mutuo con etcd usando el certificado del nodo | D8 |
 | `tls.habilitado` | `true` | TLS 1.3 y TLS mutuo entre servidores | D8 |
 | `tls.ca`, `tls.certificado`, `tls.llave` | `/etc/dfsha/certs/ca.crt`, vacío, vacío | Certificado de la CA interna y el propio del nodo (ver [docs/tls.md](tls.md)) | D8 |
 | `almacenamiento.tamano_bloque` | 16 MiB | Tamaño de bloque | D5 |
@@ -42,11 +43,12 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `tiempos.gracia_recolector_s` | 60 | Tiempo sin borrar bloques viejos tras un cambio de líder | D4 |
 | `tiempos.op_id_ttl_s` | 3600 | Vida del resultado de un commit para reintentos | D3 |
 | `tiempos.jwt_ttl_s` | 3600 | Vida del JWT | D8 |
+| `tiempos.token_renovacion_ttl_s` | 86400 | Vida del token de renovación (1 día) | D8 |
 | `tiempos.token_bloque_ttl_s` | 600 | Vida del token de acceso por bloque | D8 |
 | `tiempos.auditoria_ttl_s` | 604800 | Vida de un registro de auditoría (7 días) | D8 |
 | `limites.peticiones_simultaneas` | 64 | Límite por servidor antes de responder OVERLOADED | D8 |
-| `kms.clave`, `kms.region` | `alias/dfsha-kek`, `us-east-1` | Clave maestra que envuelve las claves de archivo | D8 |
-| `nodo.nombre` | vacío | Nombre DNS propio del nodo, por ejemplo `dn1.dfsha.internal` | D7 |
+| `kms.clave`, `kms.region` | `alias/dfsha-kek`, `us-east-1` | Clave maestra que envuelve las claves del clúster y las de archivo. `archivo:<ruta>` usa una clave local de desarrollo (ver [docs/metadatos.md](metadatos.md)) | D8 |
+| `nodo.nombre` | vacío | Nombre DNS propio del nodo, por ejemplo `dn1.dfsha.internal` o `mds1.dfsha.internal` | D7 |
 | `nodo.zona` | vacío | Zona de disponibilidad del nodo | D5 |
 | `nodo.directorio_datos` | `/var/lib/dfsha` | Dónde guarda bloques un nodo de datos | D5 |
 

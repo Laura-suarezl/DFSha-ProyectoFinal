@@ -70,6 +70,11 @@ async def test_lock_ocupado_tras_la_espera(cli, prefijo):
         with pytest.raises(LockOcupado):
             await cli.bloquear(prefijo + "locks/f/b1", s2, 1.0)
         assert 0.9 <= time.monotonic() - inicio < 3
+        # etcd borra la entrada del que esperaba del lado del servidor, unos milisegundos después
+        # de responder (menos de 30 ms medidos), así que se le da hasta 1 s
+        limite = time.monotonic() + 1
+        while await cli.contar(prefijo + "locks/f/b1/") != 1 and time.monotonic() < limite:
+            await asyncio.sleep(0.01)
         assert await cli.contar(prefijo + "locks/f/b1/") == 1   # la entrada del que esperaba se limpió
     finally:
         await cli.revocar_lease(s1)

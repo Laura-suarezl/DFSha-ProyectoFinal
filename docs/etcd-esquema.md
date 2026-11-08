@@ -16,13 +16,14 @@ etcd guarda el estado persistente del plano de control (D1). Este documento defi
 | `/dfsha/election/metadata` | Nombre del nodo líder (lo crea la API Election de etcd) | Elección | Atada al lease del líder, de 3 s |
 | `/dfsha/config` | Parámetros del clúster: tamaño de bloque, R, W y tamaño de trozo | Persistente | Se crea al iniciar el clúster |
 | `/dfsha/users/<usuario>` | Hash Argon2id, rol, cuota en bytes y bytes usados | Persistente | Lo crea el administrador |
-| `/dfsha/secrets/<nombre>` | Claves de firma (JWT Ed25519 y HMAC de los tokens de bloque) envueltas con KMS | Persistente | Se crean una vez al iniciar el clúster |
+| `/dfsha/secrets/<nombre>` | Claves de firma (`jwt-ed25519` y `hmac-bloques`) envueltas con la clave maestra de KMS | Persistente | Las crea el primer nodo de metadatos que arranca |
+| `/dfsha/refresh/<huella>` | Usuario dueño del token de renovación. La clave lleva la huella SHA-256 del token, nunca el token | Atada a un lease propio de 1 día | Login la crea y cada Refresh la cambia por otra |
 | `/dfsha/ns/<id del padre>/<nombre>` | Entrada del árbol: id, tipo (directorio o archivo), dueño, fechas | Persistente | mkdir, put, rm, rmdir, mv |
 | `/dfsha/inodes/<id>` | Índice inverso: id del padre, nombre, tipo y dueño | Persistente | Igual que la entrada del árbol |
 | `/dfsha/files/<id del archivo>` | Puntero a la versión vigente: versión, tamaño, tamaño de bloque, R, hash del archivo y clave del archivo envuelta con KMS | Persistente | Cambia en cada commit |
 | `/dfsha/manifests/<id del archivo>/<versión>` | Manifiesto de la versión: lista de bloques con índice, id, huella cifrada, huella en claro y tamaño | Persistente | Se crea en el commit y lo borra el recolector |
 | `/dfsha/uc/<id del archivo>/<descriptor>/<id del bloque>` | Bloque en construcción: índice, cadena asignada, sesión y fecha | Persistente | Se crea en AllocateBlocks. El commit borra de una vez todo el prefijo de su descriptor, y el recolector lo borra pasada una hora si nunca se confirmó |
-| `/dfsha/sessions/<id de sesión>` | Usuario y fecha de inicio | Atada al lease de la sesión (30 s) | Desaparece sola si la sesión deja de renovarse |
+| `/dfsha/sessions/<id de sesión>` | Usuario y fecha de inicio. El id es el del lease, en 16 caracteres hexadecimales | Atada al lease de la sesión (30 s) | Desaparece sola si la sesión deja de renovarse |
 | `/dfsha/locks/<id del archivo>/<objetivo>/<lease>` | La crea la API Lock de etcd | Atada al lease de la sesión | Unlock o vencimiento de la sesión |
 | `/dfsha/locks/<id del archivo>/intencion/<id de sesión>-<objetivo>` | Vacío. Intención de un lock de bloque o de `fin` (jerarquía de locks) | Atada al lease de la sesión | Se borra al liberar ese lock o al vencer la sesión |
 | `/dfsha/readleases/<id del archivo>/<versión>/<id de sesión>` | Vacío | Atada al lease de la sesión | Close o vencimiento de la sesión |
@@ -39,7 +40,7 @@ La raíz del espacio de cada usuario es la entrada `/dfsha/ns/root/<usuario>`.
 1. Al iniciar sesión, el líder crea un lease de etcd de 30 s y la clave `/dfsha/sessions/<id>` atada a él. El id de sesión es el id del lease. Renew(sesión), cada 10 s, es el keep-alive de ese lease.
 2. Para tomar un lock, el líder llama a la API Lock de etcd con el nombre `/dfsha/locks/<archivo>/<objetivo>` y el lease de la sesión del cliente. etcd ordena a los que esperan por la revisión con que llegaron (cola en orden de llegada) y devuelve la clave del lock.
 3. La revisión de creación de esa clave es el **token de cerco**. Solo crece, porque las revisiones de etcd solo crecen.
-4. Si la espera supera los 10 s, el líder cancela la llamada y responde ABORTED con el motivo LOCKED. Se comprobó con etcd v3.5.35 que, al cancelar, la entrada del que esperaba desaparece sola de la cola.
+4. Si la espera supera los 10 s, el líder cancela la llamada y responde ABORTED con el motivo LOCKED. Se comprobó con etcd v3.5.35 que, al cancelar, la entrada del que esperaba desaparece sola de la cola. etcd la borra del lado del servidor poco después de responder (13 ms de media y menos de 30 ms medidos).
 5. Si la sesión deja de renovarse, el lease vence y etcd borra la sesión, sus locks y sus arriendos de lectura a la vez.
 
 **Jerarquía de locks.** El lock `archivo` excluye a los locks de bloque y al de `fin` del mismo archivo. Como solo el líder concede locks, la jerarquía la aplica él, con claves de intención.

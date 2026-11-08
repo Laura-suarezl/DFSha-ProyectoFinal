@@ -1,8 +1,9 @@
 # Entorno local de desarrollo de DFSha (solo para desarrollar en un computador, no es el despliegue).
 # Ver deploy/compose/README.md. El despliegue real es en AWS con un Compose por máquina (D10).
 #
-# Antes de levantarlo, se crean una vez los certificados de prueba con
+# Antes de levantarlo, se crean una vez los certificados de prueba y la clave maestra local con
 #   python deploy/certs/crear_certificados.py --local
+#   python -m dfsha.metadata crear-clave-local deploy/certs/out/kek-dev.bin
 # Para levantar, probar y bajar el entorno
 #   docker compose -f deploy/compose/docker-compose.dev.yml up -d --build
 #   python deploy/compose/prueba_humo.py
@@ -10,9 +11,14 @@
 #
 # Dentro de la red "dfsha" cada contenedor responde a su nombre de AWS (dn1.dfsha.internal, ...),
 # así los certificados se validan igual que en producción. Desde el equipo anfitrión solo se
-# publican los puertos de clientes de los nodos de datos (51052 a 51055). Los puertos internos
-# (50054) solo existen dentro de la red, como los cerrarán los grupos de seguridad en AWS.
-# Los nodos de metadatos se agregan en la etapa 7, y entonces etcd pasa a usar TLS mutuo.
+# publican los puertos de clientes, 51041 a 51043 para los nodos de metadatos y 51052 a 51055 para
+# los de datos. Los puertos internos solo existen dentro de la red, como los cerrarán los grupos
+# de seguridad en AWS.
+#
+# Cada nodo de metadatos comparte la red de su miembro de etcd (network_mode), igual que en AWS,
+# donde los dos corren en la misma máquina. Por eso los nombres mdsN.dfsha.internal y
+# dfsha.internal están en los servicios de etcd. etcd todavía va sin TLS y pasa a TLS mutuo más
+# adelante en la etapa 7.
 
 name: dfsha-dev
 
@@ -39,6 +45,20 @@ x-nodo-de-datos: &nodo-de-datos
   volumes:
     - ../certs/out:/etc/dfsha/certs:ro
 
+x-metadatos: &metadatos
+  image: dfsha:dev                     # la construye el servicio de los nodos de datos
+  pull_policy: never
+  command: ["python", "-m", "dfsha.metadata"]
+  volumes:
+    - ../certs/out:/etc/dfsha/certs:ro
+
+x-metadatos-entorno: &metadatos-entorno
+  DFSHA_TLS_HABILITADO: "true"
+  DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
+  DFSHA_ETCD_DESTINO: dns:///dfsha.internal:2379
+  DFSHA_ETCD_TLS: "false"
+  DFSHA_KMS_CLAVE: archivo:/etc/dfsha/certs/kek-dev.bin
+
 x-nodo-entorno: &nodo-entorno
   DFSHA_TLS_HABILITADO: "true"
   DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
@@ -47,6 +67,8 @@ x-nodo-entorno: &nodo-entorno
 services:
   etcd1:
     <<: *etcd
+    networks: {dfsha: {aliases: [dfsha.internal, mds1.dfsha.internal]}}
+    ports: ["127.0.0.1:51041:50051"]
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd1
@@ -54,6 +76,8 @@ services:
       ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
   etcd2:
     <<: *etcd
+    networks: {dfsha: {aliases: [dfsha.internal, mds2.dfsha.internal]}}
+    ports: ["127.0.0.1:51042:50051"]
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd2
@@ -61,11 +85,41 @@ services:
       ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
   etcd3:
     <<: *etcd
+    networks: {dfsha: {aliases: [dfsha.internal, mds3.dfsha.internal]}}
+    ports: ["127.0.0.1:51043:50051"]
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd3
       ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
       ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+
+  mds1:
+    <<: *metadatos
+    network_mode: "service:etcd1"
+    depends_on: {etcd1: {condition: service_started, restart: true}}
+    environment:
+      <<: *metadatos-entorno
+      DFSHA_NODO_NOMBRE: mds1.dfsha.internal
+      DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/mds1.crt
+      DFSHA_TLS_LLAVE: /etc/dfsha/certs/mds1.key
+  mds2:
+    <<: *metadatos
+    network_mode: "service:etcd2"
+    depends_on: {etcd2: {condition: service_started, restart: true}}
+    environment:
+      <<: *metadatos-entorno
+      DFSHA_NODO_NOMBRE: mds2.dfsha.internal
+      DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/mds2.crt
+      DFSHA_TLS_LLAVE: /etc/dfsha/certs/mds2.key
+  mds3:
+    <<: *metadatos
+    network_mode: "service:etcd3"
+    depends_on: {etcd3: {condition: service_started, restart: true}}
+    environment:
+      <<: *metadatos-entorno
+      DFSHA_NODO_NOMBRE: mds3.dfsha.internal
+      DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/mds3.crt
+      DFSHA_TLS_LLAVE: /etc/dfsha/certs/mds3.key
 
   dn1:
     <<: *nodo-de-datos

@@ -25,8 +25,8 @@ Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada 
 | Operación | Qué hace | Errores propios |
 |---|---|---|
 | Login | Valida usuario y contraseña (Argon2id) y entrega el JWT, el token de renovación y una sesión de 30 s | TOKEN_INVALID |
-| Refresh | Entrega un JWT nuevo a partir del token de renovación | TOKEN_INVALID |
-| Renew | Renueva la sesión y con ella todos sus locks y arriendos de lectura. Se llama cada 10 s | TOKEN_INVALID |
+| Refresh | Entrega un JWT nuevo, una sesión nueva y un token de renovación nuevo. El token usado deja de servir | TOKEN_INVALID |
+| Renew | Renueva la sesión y con ella todos sus locks y arriendos de lectura. Se llama cada 10 s | TOKEN_INVALID, LEASE_EXPIRED |
 | List, Stat | Listan un directorio o describen una entrada | NOT_FOUND, FORBIDDEN |
 | Mkdir, Rmdir | Crean o borran un directorio | EXISTS, DIR_NOT_EMPTY, NOT_FOUND, FORBIDDEN |
 | Remove | Borra un archivo con el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
@@ -39,14 +39,14 @@ Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada 
 | Close | Libera los locks y el arriendo de lectura del descriptor | Ninguno |
 | ReportBadBlock | Avisa que una réplica no respondió o tenía la huella equivocada | Ninguno |
 
-Cualquier operación de escritura que llegue a un seguidor responde NOT_LEADER con el nombre del líder, y si no hay mayoría de nodos de metadatos responde NO_QUORUM.
+Cualquier operación que llegue a un seguidor responde NOT_LEADER con el nombre del líder. Si no hay líder en ese momento (elección en curso) o no hay mayoría de nodos de metadatos, responde NO_QUORUM. El funcionamiento interno está en [docs/metadatos.md](metadatos.md).
 
 ## AdminService
 
 | Operación | Qué hace |
 |---|---|
-| CreateUser | Crea un usuario con su contraseña, su rol y su cuota |
-| SetQuota | Cambia la cuota de un usuario |
+| CreateUser | Crea un usuario con su contraseña (al menos 8 caracteres), su rol y su cuota (0 es sin límite). Un nombre o una contraseña inválidos responden INVALID_ARGUMENT, y un usuario existente EXISTS |
+| SetQuota | Cambia la cuota de un usuario. Si no existe responde NOT_FOUND |
 | ListNodes | Muestra el estado de cada nodo de datos (vivo, sospechoso, muerto o en retiro) y quién es el líder |
 | Decommission | Inicia el retiro planificado de un nodo de datos, que copia sus bloques antes de apagarlo |
 
@@ -85,15 +85,17 @@ Cada error usa un código de estado estándar de gRPC y, en los metadatos de cie
 | FAILED_PRECONDITION | DIR_NOT_EMPTY | Borrar un directorio con contenido | entries |
 | FAILED_PRECONDITION | NOT_LEADER | La petición llegó a un seguidor | leader |
 | ABORTED | VERSION_CONFLICT | La base de algún bloque modificado ya no es la vigente | block_index, current_block_id |
-| ABORTED | LEASE_EXPIRED | Commit con un lock que ya venció | Ninguno |
+| ABORTED | LEASE_EXPIRED | Commit con un lock que ya venció, o Renew de una sesión vencida | Ninguno |
 | ABORTED | LOCKED | Se agotó la espera del lock | lock_owner, lock_expires_at_unix_ms |
-| UNAVAILABLE | NO_QUORUM | No hay mayoría de nodos de metadatos | retry_after_ms |
+| UNAVAILABLE | NO_QUORUM | No hay mayoría de nodos de metadatos, o hay una elección de líder en curso | retry_after_ms |
 | UNAVAILABLE | INSUFFICIENT_REPLICAS | Algún bloque tiene menos de 2 copias verificadas | retry_after_ms |
 | RESOURCE_EXHAUSTED | QUOTA_EXCEEDED | Se supera la cuota del usuario | used_bytes, limit_bytes |
 | RESOURCE_EXHAUSTED | NO_SPACE | No hay espacio en el clúster | Ninguno |
 | RESOURCE_EXHAUSTED | OVERLOADED | El servidor alcanzó su límite de peticiones simultáneas | retry_after_ms |
 | DATA_LOSS | CHECKSUM_MISMATCH | La huella de un bloque no coincide | block_id |
 | INVALID_ARGUMENT | BAD_OFFSET | Escribir más allá del final del archivo (no se admiten huecos) | Ninguno |
+
+Un argumento mal formado que no tiene motivo propio (por ejemplo, un nombre de usuario con mayúsculas) responde INVALID_ARGUMENT sin ErrorDetail.
 
 LOCKED usa ABORTED y no DEADLINE_EXCEEDED, porque gRPC también genera DEADLINE_EXCEEDED cuando vence el plazo del propio cliente, y así el cliente no confunde los dos casos.
 

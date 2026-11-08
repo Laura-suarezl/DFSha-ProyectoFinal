@@ -261,7 +261,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 
 **Comprobado con etcd v3.5.35.** Los .proto de etcd compilan para Python una vez quitadas las anotaciones de gogoproto y google.api, que no cambian el formato de los mensajes (ver docs/etcd-esquema.md). Contra un etcd real funcionan las transacciones con comparación de revisión, los leases con keep-alive, Lock con su token de cerco, el rechazo del commit cuando vence la sesión y Election. Al cancelar la espera de un Lock, la entrada del que esperaba desaparece sola de la cola.
 
-## Ajustes durante la implementación (etapas 3 a 5)
+## Ajustes durante la implementación
 
 Al implementar y probar las decisiones aparecieron ajustes. Ninguno simplifica un requisito, y varios lo refuerzan. La evidencia de cada uno está en los prototipos y en las pruebas del repositorio.
 
@@ -276,5 +276,8 @@ Al implementar y probar las decisiones aparecieron ajustes. Ninguno simplifica u
 | A7 | D8, D9 y D10 | El tráfico entre servidores va por los puertos internos 50053 y 50054, con TLS mutuo obligatorio, y los grupos de seguridad los cierran a los clientes | gRPC para Python no permite pedir el certificado del cliente de forma opcional en un mismo puerto, y sin puertos propios no se cumplía el TLS mutuo entre servidores | tests/test_tls.py y prototipos/cadena-datanodes, escenario 6 |
 | A8 | D9 | El arriendo de lectura dura 30 s y no 60 | Cuelga de la sesión, como dice D4 | proto/dfsha.proto |
 | A9 | D9 | Se agrega el motivo de error OVERLOADED, y el campo delete de las órdenes a los nodos pasa a llamarse remove | Faltaba un motivo para el límite de peticiones de D8, y delete es palabra reservada en otros lenguajes | proto/dfsha.proto |
+| A10 | D8 | Las claves de firma del clúster (JWT y HMAC) las genera el primer nodo de metadatos y se guardan en etcd envueltas con la misma clave maestra de KMS que las claves de archivo | Los tres nodos deben firmar y verificar con las mismas claves, y quien lea etcd o un respaldo suyo no debe obtenerlas | tests/test_metadatos.py |
+| A11 | D8 | El token de renovación dura un día, en etcd se guarda solo su huella SHA-256 y cada Refresh lo cambia por uno nuevo junto con un JWT y una sesión nuevos | D8 no fijaba su formato. Así un respaldo de etcd no permite usar tokens y un token robado que ya se usó no sirve | tests/test_metadatos.py |
+| A12 | D9 | Renew de una sesión vencida responde LEASE_EXPIRED, y un seguidor responde NO_QUORUM mientras no hay líder elegido | El cliente debe distinguir un JWT vencido (lo arregla Refresh) de una sesión vencida (sus locks se perdieron), y NOT_LEADER sin nombre de líder no le sirve | tests/test_metadatos.py |
 
 **Confirmado sin cambios.** El trozo de 1 MiB rindió más que el de 64 KiB, con y sin TLS (D5). La sesión, los locks y el commit sobreviven a la caída de cualquier miembro de etcd, y un nuevo líder de metadatos asume en unos 3 s (D1 y D4). Los bloques a medias nunca se publican y se borran al reiniciar el nodo (D5 y escenario 3 del enunciado).

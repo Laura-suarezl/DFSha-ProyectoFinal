@@ -285,6 +285,27 @@ class ClienteEtcd:
     def mantener_vivo(self, lease: int, intervalo_s: float) -> MantenedorLease:
         return MantenedorLease(self, lease, intervalo_s)
 
+    async def renovar_lease(self, lease: int) -> int:
+        """Renueva un lease una sola vez (lo que hace cada Renew de un cliente). Devuelve el TTL
+        nuevo, o 0 si el lease ya había vencido."""
+        async def uno():
+            yield rpc.LeaseKeepAliveRequest(ID=lease)
+
+        try:
+            async for respuesta in self._lease.LeaseKeepAlive(uno(), timeout=self.timeout_s):
+                return max(respuesta.TTL, 0)
+        except grpc.aio.AioRpcError as e:
+            if e.code() in _REINTENTABLES or e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                raise EtcdNoDisponible(e.details() or e.code().name) from e
+            raise
+        return 0
+
+    async def crear_si_no_existe(self, clave: str | bytes, valor: str | bytes, lease: int = 0,
+                                 comparaciones: Sequence[rpc.Compare] = ()) -> bool:
+        """Crea la clave solo si no existe (y si se cumplen las comparaciones extra). True si la creó."""
+        r = await self.txn([self.comparar_no_existe(clave), *comparaciones], [self.op_poner(clave, valor, lease)])
+        return r.succeeded
+
     # ------------------------------------------------------------------ lock (D4)
     async def bloquear(self, nombre: str | bytes, lease: int, espera_s: float) -> tuple[bytes, int]:
         """Toma el lock en la cola de etcd. Devuelve (clave del lock, token de cerco).
