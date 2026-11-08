@@ -1,0 +1,96 @@
+{
+  "1_cadena_de_3": {
+    "copias": [
+      "dn1",
+      "dn2",
+      "dn3"
+    ],
+    "segundos": 0.235,
+    "mb_por_segundo": 68.1,
+    "lectura_identica_en_cada_nodo": {
+      "dn1": true,
+      "dn2": true,
+      "dn3": true
+    }
+  },
+  "2_rendimiento": {
+    "bloque": "16 MiB",
+    "repeticiones": "1 de calentamiento y 5 medidas",
+    "condiciones": {
+      "1 nodo, trozo 1 MiB": {
+        "media_mb_s": 148.7,
+        "desviacion_mb_s": 18.1
+      },
+      "cadena de 3, trozo 1 MiB": {
+        "media_mb_s": 101.4,
+        "desviacion_mb_s": 6.9
+      },
+      "cadena de 3, trozo 64 KiB": {
+        "media_mb_s": 61.9,
+        "desviacion_mb_s": 1.6
+      }
+    },
+    "costo_de_la_cadena": "68% del rendimiento de un solo nodo"
+  },
+  "3_cae_el_ultimo_nodo": {
+    "nodo_muerto": "dn3 (kill a mitad del bloque, al enviar el trozo 10 de 16)",
+    "primera_escritura": {
+      "copias": [
+        "dn1",
+        "dn2"
+      ],
+      "segundos": 0.16
+    },
+    "reenvio_por_otra_cadena": null,
+    "temporales_que_dejo_la_caida": [
+      "b-0000000000000003.359cb905.part"
+    ],
+    "bloque_en_el_nodo_muerto_tras_reiniciar": false,
+    "temporales_tras_reiniciar": [],
+    "huella_correcta_en_las_copias": {
+      "dn1": true,
+      "dn2": true
+    }
+  },
+  "4_cae_el_nodo_del_medio": {
+    "nodo_muerto": "dn2 (kill a mitad del bloque, al enviar el trozo 10 de 16)",
+    "primera_escritura": {
+      "copias": [
+        "dn1"
+      ],
+      "segundos": 0.14
+    },
+    "reenvio_por_otra_cadena": {
+      "cadena": [
+        "dn1",
+        "dn3"
+      ],
+      "copias": [
+        "dn1",
+        "dn3"
+      ]
+    },
+    "temporales_que_dejo_la_caida": [
+      "b-0000000000000004.b6191050.part"
+    ],
+    "bloque_en_el_nodo_muerto_tras_reiniciar": false,
+    "temporales_tras_reiniciar": [],
+    "huella_correcta_en_las_copias": {
+      "dn1": true,
+      "dn3": true
+    }
+  },
+  "5_huella_incorrecta": {
+    "respuesta": "DATA_LOSS con motivo CHECKSUM_MISMATCH",
+    "bloque_publicado_en": {
+      "dn1": false,
+      "dn2": false,
+      "dn3": false
+    },
+    "temporales": {
+      "dn1": [],
+      "dn2": [],
+      "dn3": []
+    }
+  }
+}

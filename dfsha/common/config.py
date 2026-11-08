@@ -33,8 +33,13 @@ class ErrorDeConfiguracion(ValueError):
 @dataclass(frozen=True)
 class Cluster:
     nombre: str = "dfsha.internal"     # nombre lógico, resuelve a los 3 nodos de metadatos (D7)
-    puerto_metadatos: int = 50051      # MetadataService, AdminService y NodeService (D9)
-    puerto_datos: int = 50052          # DataService (D9)
+    puerto_metadatos: int = 50051          # MetadataService y AdminService, para clientes con TLS (D9)
+    puerto_datos: int = 50052              # DataService, para clientes con TLS (D9)
+    puerto_metadatos_interno: int = 50053  # NodeService, solo servidores con TLS mutuo (D8)
+    puerto_datos_interno: int = 50054      # cadena y copias entre nodos de datos, con TLS mutuo (D8)
+
+    def puertos(self) -> tuple[int, int, int, int]:
+        return (self.puerto_metadatos, self.puerto_datos, self.puerto_metadatos_interno, self.puerto_datos_interno)
 
 
 @dataclass(frozen=True)
@@ -121,8 +126,8 @@ class Configuracion:
             (0 < t.latido_s < t.sospechoso_s < t.muerto_s,
              "tiempos debe cumplir latido_s < sospechoso_s < muerto_s"),
             (t.lider_ttl_s >= 2, "tiempos.lider_ttl_s debe ser al menos 2"),
-            (self.cluster.puerto_metadatos != self.cluster.puerto_datos,
-             "cluster.puerto_metadatos y cluster.puerto_datos deben ser distintos"),
+            (len(set(self.cluster.puertos())) == 4,
+             "los cuatro puertos de cluster (metadatos, datos y sus internos) deben ser distintos"),
             (self.etcd.prefijo.startswith("/") and self.etcd.prefijo.endswith("/"),
              "etcd.prefijo debe empezar y terminar con /"),
         ]

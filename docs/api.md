@@ -6,18 +6,19 @@ El contrato está en [proto/dfsha.proto](../proto/dfsha.proto) (gRPC con Protoco
 
 | Servicio | Dónde corre | Puerto | Quién lo llama |
 |---|---|---|---|
-| MetadataService | Los 3 nodos de metadatos (solo el líder atiende) | 50051 | Cliente |
-| AdminService | Los 3 nodos de metadatos (solo el líder atiende) | 50051 | Administrador |
-| NodeService | Los 3 nodos de metadatos | 50051 | Nodos de datos |
-| DataService | Cada nodo de datos | 50052 | Cliente y otros nodos de datos |
+| MetadataService | Los 3 nodos de metadatos (solo el líder atiende) | 50051 (TLS) | Cliente |
+| AdminService | Los 3 nodos de metadatos (solo el líder atiende) | 50051 (TLS) | Administrador |
+| NodeService | Los 3 nodos de metadatos | 50053 (TLS mutuo) | Nodos de datos |
+| DataService | Cada nodo de datos | 50052 (TLS) | Cliente |
+| DataService | Cada nodo de datos | 50054 (TLS mutuo) | Otros nodos de datos (cadena y copias de reposición) |
 
-Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada nodo presenta un certificado de la CA interna emitido para su nombre DNS. Los nodos se nombran siempre por nombre (`mdsN.dfsha.internal`, `dnN.dfsha.internal`), nunca por IP.
+Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada nodo presenta un certificado de la CA interna emitido para su nombre DNS. Como gRPC para Python no permite pedir el certificado del cliente de forma opcional, el tráfico entre servidores va por puertos internos propios (50053 y 50054), que los grupos de seguridad cierran a los clientes. Los nodos se nombran siempre por nombre (`mdsN.dfsha.internal`, `dnN.dfsha.internal`), nunca por IP. La CA y los certificados se describen en [docs/tls.md](tls.md).
 
 ## Autenticación en cada llamada
 
 - **MetadataService y AdminService.** Cada llamada, salvo Login y Refresh, lleva la cabecera `authorization: Bearer <JWT>`. El JWT dura una hora y lo firma el líder con Ed25519. AdminService exige además el rol administrador.
 - **DataService.** Cada escritura y lectura lleva en el mensaje un token de acceso por bloque, firmado con HMAC y válido 10 minutos, que el líder entrega en Open, GetBlockLocations o AllocateBlocks. El nodo de datos lo verifica sin consultar al líder.
-- **NodeService.** El nodo de datos se identifica con su certificado de TLS mutuo.
+- **NodeService y DataService en el puerto interno.** El otro nodo se identifica con su certificado de TLS mutuo. NodeService solo acepta certificados de nodos de datos (`dnN`).
 
 ## MetadataService
 
@@ -54,7 +55,7 @@ Cualquier operación de escritura que llegue a un seguidor responde NOT_LEADER c
 **WriteBlock (streaming del cliente).** El bloque cifrado viaja en trozos `ChunkPayload`, de 1 MB por defecto.
 1. El primer trozo lleva el id del bloque, la huella SHA-256 del bloque completo, los nodos restantes de la cadena y el token de acceso.
 2. Los trozos siguientes solo llevan el número de secuencia y los datos, y el último marca `is_last_chunk`.
-3. Cada nodo escribe lo que recibe en un archivo temporal y reenvía cada trozo al siguiente nodo de la cadena mientras lo recibe.
+3. Cada nodo escribe lo que recibe en un archivo temporal y reenvía cada trozo al siguiente nodo de la cadena mientras lo recibe. La cadena que entrega AllocateBlocks trae el primer nodo con su puerto de clientes (50052) y los siguientes con el puerto interno (50054), así que el reenvío entre nodos va siempre por TLS mutuo.
 4. Al terminar, cada nodo verifica la huella de su copia, la renombra a definitiva y avisa con BlockReceived a los 3 nodos de metadatos.
 5. La respuesta `WriteResult` vuelve por la cadena e indica qué nodos guardaron y verificaron su copia. El bloque cuenta como escrito con al menos 2.
 
@@ -121,8 +122,8 @@ Lock      < grants { target { block_index: 7 }  fencing_token: 41  current_block
 
 AllocateBlocks > fd: "fd-815"  indices: 7
 AllocateBlocks < blocks { index: 7  block_id: "b-9c02e7b1a4f86d30"
-                          chain: "dn4.dfsha.internal:50052"  chain: "dn1.dfsha.internal:50052"
-                          chain: "dn2.dfsha.internal:50052"  access_token: <token> }
+                          chain: "dn4.dfsha.internal:50052"  chain: "dn1.dfsha.internal:50054"
+                          chain: "dn2.dfsha.internal:50054"  access_token: <token> }
 
 Commit    > fd: "fd-815"  op_id: "c-5531"  new_size: 1073741824
             blocks { index: 7  new_block_id: "b-9c02e7b1a4f86d30"  base_block_id: "b-5e10c2a9f0d34e71"

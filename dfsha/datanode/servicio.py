@@ -1,7 +1,8 @@
 """DataService del nodo de datos: escritura en cadena, lectura y diagnóstico (D5, D6 y D9).
 
 WriteBlock recibe el bloque en trozos y, mientras lo guarda, reenvía cada trozo al siguiente
-nodo de la cadena (downstream_nodes). Cada nodo verifica su propia copia antes de renombrarla a
+nodo de la cadena (downstream_nodes), que llega con su puerto interno. Con TLS habilitado, el
+reenvío presenta el certificado del nodo (TLS mutuo, docs/tls.md). Cada nodo verifica su propia copia antes de renombrarla a
 definitiva. La respuesta indica qué nodos de la cadena guardaron y verificaron su copia
 (stored_on), y el bloque cuenta como escrito con al menos W de ellas (D5).
 

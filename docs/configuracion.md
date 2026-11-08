@@ -19,13 +19,15 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | Sección y clave | Por defecto | Qué es | Decisión |
 |---|---|---|---|
 | `cluster.nombre` | `dfsha.internal` | Nombre lógico que resuelve a los 3 nodos de metadatos | D7 |
-| `cluster.puerto_metadatos` | 50051 | MetadataService, AdminService y NodeService | D9 |
-| `cluster.puerto_datos` | 50052 | DataService | D9 |
+| `cluster.puerto_metadatos` | 50051 | MetadataService y AdminService, para clientes, con TLS | D9 |
+| `cluster.puerto_datos` | 50052 | DataService, para clientes, con TLS | D9 |
+| `cluster.puerto_metadatos_interno` | 50053 | NodeService, solo nodos de datos, con TLS mutuo | D8 |
+| `cluster.puerto_datos_interno` | 50054 | DataService entre nodos de datos (cadena y copias), con TLS mutuo | D8 |
 | `etcd.destino` | `dns:///dfsha.internal:2379` | Destino gRPC con los 3 miembros de etcd | D1 |
 | `etcd.prefijo` | `/dfsha/` | Prefijo de todas las claves | Esquema de etcd |
 | `etcd.timeout_s` | 5 | Plazo total de cada llamada a etcd, reintentos incluidos | D1 |
 | `tls.habilitado` | `true` | TLS 1.3 y TLS mutuo entre servidores | D8 |
-| `tls.ca`, `tls.certificado`, `tls.llave` | `/etc/dfsha/certs/ca.crt`, vacío, vacío | Certificado de la CA interna y el propio del nodo | D8 |
+| `tls.ca`, `tls.certificado`, `tls.llave` | `/etc/dfsha/certs/ca.crt`, vacío, vacío | Certificado de la CA interna y el propio del nodo (ver [docs/tls.md](tls.md)) | D8 |
 | `almacenamiento.tamano_bloque` | 16 MiB | Tamaño de bloque | D5 |
 | `almacenamiento.replicas` | 3 | R, mínimo 2 | D5 |
 | `almacenamiento.confirmaciones` | 2 | W, copias verificadas para dar un bloque por escrito | D5 |
@@ -55,7 +57,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 - La renovación es como máximo la mitad de la vida de la sesión, para que un mensaje perdido no la haga vencer.
 - Se cumple latido < sospechoso < muerto.
 - El lease del líder es de al menos 2 s.
-- Los puertos del plano de control y del plano de datos son distintos.
+- Los cuatro puertos (metadatos, datos y sus dos internos) son distintos.
 - El prefijo de etcd empieza y termina con `/`.
 - Una clave o sección desconocida en el archivo TOML es un error, para no aceptar en silencio un nombre mal escrito.
 

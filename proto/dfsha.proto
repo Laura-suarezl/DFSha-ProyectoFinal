@@ -1,13 +1,16 @@
 // Contrato gRPC de DFSha (decisión D9 de docs/decisiones.md).
 // Documentación de cada operación, cabeceras y errores en docs/api.md.
 //
-// Puertos:
-//   50051  MetadataService, AdminService y NodeService, en los 3 nodos de metadatos.
+// Puertos (docs/tls.md):
+//   50051  MetadataService y AdminService, para clientes, con TLS. En los 3 nodos de metadatos.
 //          Solo el líder atiende escrituras. Un seguidor responde FAILED_PRECONDITION
 //          con el motivo REASON_NOT_LEADER y el nombre del líder.
-//   50052  DataService, en cada nodo de datos.
+//   50052  DataService, para clientes, con TLS. En cada nodo de datos.
+//   50053  NodeService, solo para nodos de datos, con TLS mutuo. En los 3 nodos de metadatos.
+//   50054  DataService, solo entre nodos de datos (cadena y copias), con TLS mutuo.
 //
-// Todos los canales usan TLS 1.3. Entre servidores, TLS mutuo (D8).
+// Todos los canales usan TLS 1.3. Entre servidores, TLS mutuo (D8), por eso los servidores
+// se hablan por los puertos internos, que exigen certificado de la CA interna.
 // Los nombres de los nodos son nombres DNS (dnN.dfsha.internal), nunca IPs (D7).
 
 syntax = "proto3";
@@ -174,7 +177,7 @@ message AllocateBlocksRequest {
 message AllocatedBlock {
   uint32 index = 1;
   string block_id = 2;               // id nuevo (copy-on-write)
-  repeated string chain = 3;         // cadena de nodos de datos, el primero recibe del cliente
+  repeated string chain = 3;         // cadena, el primero con su puerto de clientes (50052) y los demás con el interno (50054)
   bytes access_token = 4;            // token de acceso de escritura firmado con HMAC (10 min)
 }
 
@@ -289,7 +292,7 @@ message DecommissionRequest {
 }
 
 // =====================================================================
-// DataService (puerto 50052, en cada nodo de datos)
+// DataService (puertos 50052 para clientes y 50054 entre nodos de datos)
 // =====================================================================
 
 service DataService {
@@ -310,7 +313,7 @@ message ChunkPayload {
   bytes data = 3;
   bool is_last_chunk = 4;
   string block_checksum = 5;         // SHA-256 del bloque completo cifrado
-  repeated string downstream_nodes = 6;  // nodos restantes de la cadena
+  repeated string downstream_nodes = 6;  // nodos restantes de la cadena, con su puerto interno (50054)
   bytes access_token = 7;            // token de acceso por bloque (D8)
 }
 
@@ -341,7 +344,7 @@ message HealthCheckResponse {
 }
 
 // =====================================================================
-// NodeService (puerto 50051, los nodos de datos llaman a los 3 nodos de metadatos)
+// NodeService (puerto interno 50053, los nodos de datos llaman a los 3 nodos de metadatos)
 // =====================================================================
 
 service NodeService {

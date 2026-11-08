@@ -5,8 +5,8 @@
       "dn2",
       "dn3"
     ],
-    "segundos": 0.115,
-    "mb_por_segundo": 138.8,
+    "segundos": 0.261,
+    "mb_por_segundo": 61.3,
     "lectura_identica_en_cada_nodo": {
       "dn1": true,
       "dn2": true,
@@ -18,19 +18,19 @@
     "repeticiones": "1 de calentamiento y 5 medidas",
     "condiciones": {
       "1 nodo, trozo 1 MiB": {
-        "media_mb_s": 201.4,
-        "desviacion_mb_s": 23.2
+        "media_mb_s": 84.8,
+        "desviacion_mb_s": 3.6
       },
       "cadena de 3, trozo 1 MiB": {
-        "media_mb_s": 135.0,
-        "desviacion_mb_s": 5.1
+        "media_mb_s": 66.6,
+        "desviacion_mb_s": 0.6
       },
       "cadena de 3, trozo 64 KiB": {
-        "media_mb_s": 98.0,
-        "desviacion_mb_s": 3.2
+        "media_mb_s": 39.5,
+        "desviacion_mb_s": 8.9
       }
     },
-    "costo_de_la_cadena": "67% del rendimiento de un solo nodo"
+    "costo_de_la_cadena": "79% del rendimiento de un solo nodo"
   },
   "3_cae_el_ultimo_nodo": {
     "nodo_muerto": "dn3 (kill a mitad del bloque, al enviar el trozo 10 de 16)",
@@ -39,11 +39,11 @@
         "dn1",
         "dn2"
       ],
-      "segundos": 0.1
+      "segundos": 0.66
     },
     "reenvio_por_otra_cadena": null,
     "temporales_que_dejo_la_caida": [
-      "b-0000000000000003.c0b78a03.part"
+      "b-0000000000000003.0a2a90cd.part"
     ],
     "bloque_en_el_nodo_muerto_tras_reiniciar": false,
     "temporales_tras_reiniciar": [],
@@ -58,7 +58,7 @@
       "copias": [
         "dn1"
       ],
-      "segundos": 0.08
+      "segundos": 0.21
     },
     "reenvio_por_otra_cadena": {
       "cadena": [
@@ -71,7 +71,7 @@
       ]
     },
     "temporales_que_dejo_la_caida": [
-      "b-0000000000000004.b1c4194a.part"
+      "b-0000000000000004.54475b45.part"
     ],
     "bloque_en_el_nodo_muerto_tras_reiniciar": false,
     "temporales_tras_reiniciar": [],
@@ -92,5 +92,12 @@
       "dn2": [],
       "dn3": []
     }
+  },
+  "6_seguridad_de_los_puertos": {
+    "nodo_legitimo_al_puerto_interno": "aceptado, copia en ['dn2']",
+    "cliente_sin_certificado_al_puerto_interno": "rechazado (UNAVAILABLE)",
+    "certificado_de_otra_ca_al_puerto_interno": "rechazado (UNAVAILABLE)",
+    "conexion_sin_tls_al_puerto_de_clientes": "rechazado (UNAVAILABLE)",
+    "cliente_con_tls_al_puerto_de_clientes": "aceptado, copia en ['dn1']"
   }
 }

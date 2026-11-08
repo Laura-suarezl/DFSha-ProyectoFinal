@@ -1,10 +1,12 @@
-"""Prototipo de la etapa 4: escritura en cadena entre 3 nodos de datos en procesos separados.
+"""Prototipo de las etapas 4 y 5: escritura en cadena entre 3 nodos de datos en procesos separados.
 
-Arranca tres procesos "python -m dfsha.datanode", cada uno con su directorio de datos y su
-puerto, configurados solo con variables de entorno. Se comunican por la red (127.0.0.1).
+Arranca tres procesos "python -m dfsha.datanode", cada uno con su directorio de datos, sus dos
+puertos y su certificado, configurados solo con variables de entorno. Se comunican por la red
+(localhost). Crea una CA interna propia en una carpeta temporal: el cliente entra con TLS por
+el puerto de clientes y los nodos se reenvían el bloque por los puertos internos con TLS mutuo.
 
-Uso:  python prototipos/cadena-datanodes/prueba_cadena.py
-Escribe los resultados en prototipos/cadena-datanodes/resultados.json.
+Uso:  python prototipos/cadena-datanodes/prueba_cadena.py [--sin-tls]
+Escribe los resultados en prototipos/cadena-datanodes/resultados.json (o resultados-sin-tls.json).
 
 Escenarios:
   1. Un bloque de 16 MiB por la cadena de 3 nodos: tres copias idénticas.
@@ -12,6 +14,8 @@ Escenarios:
   3. El último nodo muere (kill) a mitad del bloque: quedan 2 copias (W = 2).
   4. El nodo del medio muere: queda 1 copia y el cliente reenvía por otra cadena con el mismo id.
   5. Huella incorrecta: ningún nodo publica el bloque ni deja temporales.
+  6. Seguridad: el puerto interno rechaza a quien no tiene certificado o lo trae de otra CA,
+     y el puerto de clientes rechaza conexiones sin TLS.
 """
 from __future__ import annotations
 
@@ -35,12 +39,29 @@ sys.path.insert(0, str(RAIZ))
 
 from dfsha._gen import dfsha_pb2 as pb  # noqa: E402
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc  # noqa: E402
+from dfsha.common.config import Tls  # noqa: E402
 from dfsha.common.errores import motivo_de  # noqa: E402
+from dfsha.common.tls import credenciales_canal  # noqa: E402
 
 MIB = 1024 * 1024
-PUERTOS = {"dn1": 50061, "dn2": 50062, "dn3": 50063}
+PUERTOS = {"dn1": 50061, "dn2": 50062, "dn3": 50063}            # puertos de clientes
+INTERNOS = {"dn1": 50071, "dn2": 50072, "dn3": 50073}           # puertos internos (TLS mutuo)
+# Por IP y no por "localhost": en Windows cada conexión nueva a "localhost" tarda unos 260 ms porque
+# gRPC prueba primero IPv6. Los certificados de prueba (--local) incluyen 127.0.0.1, así que TLS
+# verifica igual la identidad de cada nodo.
 DIR = {n: f"127.0.0.1:{p}" for n, p in PUERTOS.items()}
+DIR_INTERNO = {n: f"127.0.0.1:{p}" for n, p in INTERNOS.items()}
+CON_TLS = "--sin-tls" not in sys.argv
+CERTS: Path | None = None
 resultados: dict[str, dict] = {}
+
+
+def canal(direccion: str, tls: Tls | None = None):
+    """Canal del cliente (solo la CA) o, con tls, de un nodo con su certificado."""
+    if not CON_TLS:
+        return grpc.aio.insecure_channel(direccion)
+    credenciales = credenciales_canal(tls, con_certificado=True) if tls else credenciales_canal(Tls(ca=str(CERTS / "ca.crt")))
+    return grpc.aio.secure_channel(direccion, credenciales)
 
 
 def informar(escenario: str, **datos) -> None:
@@ -63,7 +84,12 @@ class Nodos:
                        DFSHA_NODO_NOMBRE=nombre,
                        DFSHA_NODO_DIRECTORIO_DATOS=str(self.base / nombre),
                        DFSHA_CLUSTER_PUERTO_DATOS=str(PUERTOS[nombre]),
-                       DFSHA_TLS_HABILITADO="false")
+                       DFSHA_CLUSTER_PUERTO_DATOS_INTERNO=str(INTERNOS[nombre]),
+                       DFSHA_TLS_HABILITADO="true" if CON_TLS else "false")
+        if CON_TLS:
+            entorno.update(DFSHA_TLS_CA=str(CERTS / "ca.crt"),
+                           DFSHA_TLS_CERTIFICADO=str(CERTS / f"{nombre}.crt"),
+                           DFSHA_TLS_LLAVE=str(CERTS / f"{nombre}.key"))
         registro = open(self.base / f"{nombre}.log", "a", encoding="utf-8")
         self.procesos[nombre] = subprocess.Popen(
             [sys.executable, "-m", "dfsha.datanode", "--escucha", "127.0.0.1"],
@@ -81,8 +107,8 @@ class Nodos:
                 p.wait()
 
     async def esperar_listo(self, nombre: str) -> None:
-        async with grpc.aio.insecure_channel(DIR[nombre]) as canal:
-            await asyncio.wait_for(canal.channel_ready(), 30)
+        async with canal(DIR[nombre]) as c:
+            await asyncio.wait_for(c.channel_ready(), 30)
 
     def bloques(self, nombre: str) -> list[str]:
         return sorted(p.name for p in (self.base / nombre / "blocks").glob("b-*") if p.suffix == "")
@@ -109,14 +135,15 @@ def trozos(block_id: str, datos: bytes, cadena_restante: list[str], tamano_trozo
 
 
 async def escribir(cadena: list[str], block_id: str, datos: bytes, tamano_trozo: int = MIB, **kw):
-    async with grpc.aio.insecure_channel(DIR[cadena[0]]) as canal:
-        stub = pb_grpc.DataServiceStub(canal)
-        return await stub.WriteBlock(trozos(block_id, datos, [DIR[n] for n in cadena[1:]], tamano_trozo, **kw))
+    """El cliente entra por el puerto de clientes del primero. Los demás van con su puerto interno."""
+    async with canal(DIR[cadena[0]]) as c:
+        stub = pb_grpc.DataServiceStub(c)
+        return await stub.WriteBlock(trozos(block_id, datos, [DIR_INTERNO[n] for n in cadena[1:]], tamano_trozo, **kw))
 
 
 async def leer(nombre: str, block_id: str) -> bytes:
-    async with grpc.aio.insecure_channel(DIR[nombre]) as canal:
-        stub = pb_grpc.DataServiceStub(canal)
+    async with canal(DIR[nombre]) as c:
+        stub = pb_grpc.DataServiceStub(c)
         return b"".join([t.data async for t in stub.ReadBlock(pb.ReadBlockRequest(block_id=block_id))])
 
 
@@ -201,9 +228,48 @@ async def escenario_5(nodos: Nodos) -> None:
              temporales={n: nodos.temporales(n) for n in PUERTOS})
 
 
+def crear_ca(salida: Path, datos: int) -> None:
+    subprocess.run([sys.executable, str(RAIZ / "deploy" / "certs" / "crear_certificados.py"), "--local",
+                    "--metadatos", "0", "--datos", str(datos), "--salida", str(salida)],
+                   check=True, capture_output=True)
+
+
+async def escenario_6(nodos: Nodos) -> None:
+    """Quién puede entrar por cada puerto."""
+    async def intento(direccion: str, credenciales) -> str:
+        datos = os.urandom(64 * 1024)
+        try:
+            async with (grpc.aio.secure_channel(direccion, credenciales) if credenciales
+                        else grpc.aio.insecure_channel(direccion)) as c:
+                r = await pb_grpc.DataServiceStub(c).WriteBlock(
+                    trozos(id_bloque(600 + len(direccion) % 7), datos, [], MIB), timeout=5)
+                return f"aceptado, copia en {list(r.stored_on)}"
+        except grpc.aio.AioRpcError as e:
+            return f"rechazado ({e.code().name})"
+
+    otra = nodos.base / "otra-ca"
+    crear_ca(otra, 1)
+    ca = str(CERTS / "ca.crt")
+    informar("6_seguridad_de_los_puertos",
+             nodo_legitimo_al_puerto_interno=await intento(
+                 DIR_INTERNO["dn2"], credenciales_canal(Tls(ca=ca, certificado=str(CERTS / "dn1.crt"),
+                                                            llave=str(CERTS / "dn1.key")), con_certificado=True)),
+             cliente_sin_certificado_al_puerto_interno=await intento(
+                 DIR_INTERNO["dn2"], credenciales_canal(Tls(ca=ca))),
+             certificado_de_otra_ca_al_puerto_interno=await intento(
+                 DIR_INTERNO["dn2"], credenciales_canal(Tls(ca=ca, certificado=str(otra / "dn1.crt"),
+                                                            llave=str(otra / "dn1.key")), con_certificado=True)),
+             conexion_sin_tls_al_puerto_de_clientes=await intento(DIR["dn1"], None),
+             cliente_con_tls_al_puerto_de_clientes=await intento(DIR["dn1"], credenciales_canal(Tls(ca=ca))))
+
+
 async def main() -> int:
+    global CERTS
     base = Path(tempfile.mkdtemp(prefix="dfsha-cadena-"))
     nodos = Nodos(base)
+    if CON_TLS:
+        CERTS = base / "certs"
+        crear_ca(CERTS, len(PUERTOS))
     try:
         for n in PUERTOS:
             nodos.arrancar(n)
@@ -214,11 +280,14 @@ async def main() -> int:
         await escenario_caida(nodos, "dn3", "3_cae_el_ultimo_nodo", id_bloque(3))
         await escenario_caida(nodos, "dn2", "4_cae_el_nodo_del_medio", id_bloque(4))
         await escenario_5(nodos)
+        if CON_TLS:
+            await escenario_6(nodos)
     finally:
         nodos.detener_todos()
         shutil.rmtree(base, ignore_errors=True)
     # Finales de línea de Linux en cualquier sistema, igual que en el repositorio (.gitattributes)
-    (AQUI / "resultados.json").write_text(json.dumps(resultados, ensure_ascii=False, indent=2) + "\n",
+    archivo = "resultados.json" if CON_TLS else "resultados-sin-tls.json"
+    (AQUI / archivo).write_text(json.dumps(resultados, ensure_ascii=False, indent=2) + "\n",
                                           encoding="utf-8", newline="\n")
     return 0
 
