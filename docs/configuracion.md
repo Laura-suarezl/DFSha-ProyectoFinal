@@ -23,6 +23,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `cluster.puerto_datos` | 50052 | DataService, para clientes, con TLS | D9 |
 | `cluster.puerto_metadatos_interno` | 50053 | NodeService, solo nodos de datos, con TLS mutuo | D8 |
 | `cluster.puerto_datos_interno` | 50054 | DataService entre nodos de datos (cadena y copias), con TLS mutuo | D8 |
+| `cluster.nodos_metadatos` | `mds1.dfsha.internal,mds2.dfsha.internal,mds3.dfsha.internal` | Nodos de metadatos a los que cada nodo de datos envía latidos y avisos | D6 |
 | `etcd.destino` | `dns:///dfsha.internal:2379` | Destino gRPC con los 3 miembros de etcd | D1 |
 | `etcd.prefijo` | `/dfsha/` | Prefijo de todas las claves | Esquema de etcd |
 | `etcd.timeout_s` | 5 | Plazo total de cada llamada a etcd, reintentos incluidos | D1 |
@@ -45,6 +46,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `tiempos.jwt_ttl_s` | 3600 | Vida del JWT | D8 |
 | `tiempos.token_renovacion_ttl_s` | 86400 | Vida del token de renovación (1 día) | D8 |
 | `tiempos.token_bloque_ttl_s` | 600 | Vida del token de acceso por bloque | D8 |
+| `tiempos.inventario_s`, `tiempos.revision_s` | 3600, 86400 | Inventario periódico y revisión de huellas de cada nodo de datos | D6 |
 | `tiempos.auditoria_ttl_s` | 604800 | Vida de un registro de auditoría (7 días) | D8 |
 | `limites.peticiones_simultaneas` | 64 | Límite por servidor antes de responder OVERLOADED | D8 |
 | `kms.clave`, `kms.region` | `alias/dfsha-kek`, `us-east-1` | Clave maestra que envuelve las claves del clúster y las de archivo. `archivo:<ruta>` usa una clave local de desarrollo (ver [docs/metadatos.md](metadatos.md)) | D8 |

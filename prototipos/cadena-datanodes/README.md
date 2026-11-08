@@ -14,7 +14,7 @@ El script crea una CA interna en una carpeta temporal (con `deploy/certs/crear_c
 Un nodo de datos se arranca a mano de la misma forma.
 
 ```
-DFSHA_NODO_NOMBRE=dn1 DFSHA_NODO_DIRECTORIO_DATOS=/tmp/dn1 DFSHA_TLS_CA=certs/ca.crt DFSHA_TLS_CERTIFICADO=certs/dn1.crt DFSHA_TLS_LLAVE=certs/dn1.key python -m dfsha.datanode
+DFSHA_NODO_NOMBRE=dn1 DFSHA_NODO_DIRECTORIO_DATOS=/tmp/dn1 DFSHA_TLS_CA=certs/ca.crt DFSHA_TLS_CERTIFICADO=certs/dn1.crt DFSHA_TLS_LLAVE=certs/dn1.key python -m dfsha.datanode --sin-metadatos
 ```
 
 ## Resultados

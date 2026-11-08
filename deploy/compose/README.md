@@ -42,10 +42,11 @@ docker compose -f deploy/compose/docker-compose.dev.yml down -v
 1. Crea un administrador de prueba con contraseña aleatoria (`crear-admin` dentro de mds1), busca al líder de metadatos siguiendo las respuestas NOT_LEADER e inicia sesión.
 2. Crea un usuario, comprueba que ese usuario no puede administrar y renueva la sesión.
 3. Comprueba que los dos seguidores remiten al líder.
-4. Escribe un bloque de 16 MiB en dn1 con la cadena dn1, dn2 y dn3. Dentro de la red, dn1 lo reenvía a dn2 y dn3 por sus puertos internos con TLS mutuo.
-5. Lee el bloque desde los tres nodos y compara su huella.
-6. Comprueba que dn4, que no estaba en la cadena, no tiene el bloque.
-7. Comprueba que los puertos internos y el de etcd no se alcanzan desde el anfitrión.
+4. Comprueba con ListNodes que el líder ve los 4 nodos de datos vivos, y que una escritura sin token de acceso se rechaza. Mientras no existe AllocateBlocks, la prueba pide los tokens a mds1.
+5. Escribe un bloque de 16 MiB en dn1 con la cadena dn1, dn2 y dn3. Dentro de la red, dn1 lo reenvía a dn2 y dn3 por sus puertos internos con TLS mutuo.
+6. Lee el bloque desde los tres nodos, compara su huella y comprueba que el líder recibió los avisos de las 3 copias.
+7. Comprueba que dn4, que no estaba en la cadena, no tiene el bloque.
+8. Comprueba que los puertos internos y el de etcd no se alcanzan desde el anfitrión.
 
 Resultado esperado.
 
@@ -54,12 +55,15 @@ Líder de metadatos: mds3, sesión 37ada1bc1d96d70d iniciada por humo1dba05
 Usuario ana5dda1c creado e inicia sesión: True
 Un usuario sin rol administrador intenta crear usuarios: FORBIDDEN
 Renew de la sesión: le quedan 30 s
+Nodos de datos vistos por el líder: dn1 ALIVE, dn2 ALIVE, dn3 ALIVE, dn4 ALIVE
 mds1 responde: NOT_LEADER mds3.dfsha.internal
 mds2 responde: NOT_LEADER mds3.dfsha.internal
+Escritura sin token de acceso: TOKEN_INVALID
 Escritura de 16 MiB por la cadena: copias en ['dn1.dfsha.internal', 'dn2.dfsha.internal', 'dn3.dfsha.internal']
 Lectura desde dn1: idéntica
 Lectura desde dn2: idéntica
 Lectura desde dn3: idéntica
+El líder sabe que el bloque está en: ['dn1', 'dn2', 'dn3']
 dn4, que no estaba en la cadena, tiene el bloque: False
 Puerto interno 50054 alcanzable desde el anfitrión: False
 Puerto interno 50053 alcanzable desde el anfitrión: False

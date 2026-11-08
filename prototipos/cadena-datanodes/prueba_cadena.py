@@ -92,7 +92,7 @@ class Nodos:
                            DFSHA_TLS_LLAVE=str(CERTS / f"{nombre}.key"))
         registro = open(self.base / f"{nombre}.log", "a", encoding="utf-8")
         self.procesos[nombre] = subprocess.Popen(
-            [sys.executable, "-m", "dfsha.datanode", "--escucha", "127.0.0.1"],
+            [sys.executable, "-m", "dfsha.datanode", "--escucha", "127.0.0.1", "--sin-metadatos"],
             env=entorno, stdout=registro, stderr=subprocess.STDOUT)
 
     def matar(self, nombre: str) -> None:

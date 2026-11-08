@@ -35,6 +35,7 @@ from dfsha.metadata.autenticacion import Autenticador
 from dfsha.metadata.claves import cargar_secretos, crear_clave_local, envoltorio_desde
 from dfsha.metadata.etcd import ClienteEtcd, EtcdNoDisponible
 from dfsha.metadata.lider import Elector
+from dfsha.metadata.nodos import ServicioNodos
 from dfsha.metadata.servicio import Nucleo, ServicioAdministracion, ServicioMetadatos
 from dfsha.metadata.usuarios import RepositorioUsuarios, UsuarioInvalido
 
@@ -74,6 +75,12 @@ def registrar_servicios(servidor: grpc.aio.Server, nucleo: Nucleo) -> None:
     pb_grpc.add_AdminServiceServicer_to_server(ServicioAdministracion(nucleo), servidor)
 
 
+def servicio_nodos(nucleo: Nucleo) -> ServicioNodos:
+    cfg = nucleo.cfg
+    return ServicioNodos(nucleo.nodos, nucleo.elector, nucleo.autenticador.secretos, cfg.tiempos,
+                         exigir_identidad=cfg.tls.habilitado)
+
+
 async def servir(escucha: str) -> None:
     cfg = cargar()
     if not cfg.nodo.nombre:
@@ -84,24 +91,34 @@ async def servir(escucha: str) -> None:
 
     servidor = grpc.aio.server()
     registrar_servicios(servidor, nucleo)
+    # NodeService va en un servidor aparte: un servicio por puerto (docs/tls.md)
+    interno = grpc.aio.server()
+    pb_grpc.add_NodeServiceServicer_to_server(servicio_nodos(nucleo), interno)
     direccion = f"{escucha}:{cfg.cluster.puerto_metadatos}"
+    direccion_interna = f"{escucha}:{cfg.cluster.puerto_metadatos_interno}"
     if cfg.tls.habilitado:
         servidor.add_secure_port(direccion, credenciales_servidor(cfg.tls))
-        modo = "TLS"
+        interno.add_secure_port(direccion_interna, credenciales_servidor(cfg.tls, exigir_certificado_cliente=True))
+        modo = "TLS, y TLS mutuo en el interno"
     else:
         servidor.add_insecure_port(direccion)
+        interno.add_insecure_port(direccion_interna)
         modo = "SIN TLS (solo para desarrollo)"
     await servidor.start()
+    await interno.start()
     try:                                     # docker stop envía SIGTERM: renuncia en orden
-        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(servidor.stop(5)))
+        asyncio.get_running_loop().add_signal_handler(
+            signal.SIGTERM, lambda: (asyncio.ensure_future(interno.stop(5)), asyncio.ensure_future(servidor.stop(5))))
     except NotImplementedError:              # Windows no tiene add_signal_handler
         pass
-    log.info("nodo de metadatos %s escuchando en %s con %s, etcd en %s (%s)", cfg.nodo.nombre, direccion, modo,
+    log.info("nodo de metadatos %s escuchando en %s y %s con %s, etcd en %s (%s)", cfg.nodo.nombre, direccion,
+             direccion_interna, modo,
              cfg.etcd.destino, "TLS mutuo" if cfg.etcd.tls else "sin TLS")
     try:
         await servidor.wait_for_termination()
     finally:
         await servidor.stop(5)
+        await interno.stop(5)
         await nucleo.elector.detener()
         await cli.cerrar()
 

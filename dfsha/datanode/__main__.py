@@ -1,6 +1,11 @@
 """Arranca un nodo de datos con la configuración de dfsha/common/config.py.
 
-Uso:  python -m dfsha.datanode [--escucha 0.0.0.0]
+Uso:  python -m dfsha.datanode [--escucha 0.0.0.0] [--sin-metadatos]
+
+Al arrancar se registra en los nodos de metadatos (cluster.nodos_metadatos, puerto interno 50053)
+y recibe la clave para verificar los tokens de acceso. Después envía latidos, avisos e inventarios
+y ejecuta las órdenes del líder (dfsha/datanode/latidos.py). --sin-metadatos arranca sin ellos y
+sin verificar tokens, solo para los prototipos y pruebas del plano de datos.
 
 Toma de la configuración el nombre del nodo (nodo.nombre), su directorio de datos
 (nodo.directorio_datos), sus dos puertos (cluster.puerto_datos para los clientes y
@@ -24,12 +29,13 @@ from dfsha._gen import dfsha_pb2_grpc as pb_grpc
 from dfsha.common.config import ErrorDeConfiguracion, cargar
 from dfsha.common.tls import credenciales_canal, credenciales_servidor
 from dfsha.datanode.almacen import Almacen
+from dfsha.datanode.latidos import ClienteMetadatos
 from dfsha.datanode.servicio import ServicioDatos
 
 log = logging.getLogger("dfsha.datanode")
 
 
-async def servir(escucha: str) -> None:
+async def servir(escucha: str, sin_metadatos: bool = False) -> None:
     cfg = cargar()
     if not cfg.nodo.nombre:
         raise ErrorDeConfiguracion("falta nodo.nombre (DFSHA_NODO_NOMBRE)")
@@ -38,7 +44,11 @@ async def servir(escucha: str) -> None:
     almacen = Almacen(cfg.nodo.directorio_datos)
     borrados = almacen.limpiar_temporales()
     servicio = ServicioDatos(almacen, cfg.nodo.nombre, cfg.almacenamiento.tamano_trozo,
-                             credenciales_salida=salida)
+                             credenciales_salida=salida, limite_peticiones=cfg.limites.peticiones_simultaneas)
+    metadatos = None
+    if not sin_metadatos:
+        metadatos = ClienteMetadatos(cfg, almacen, servicio, salida)
+        await metadatos.registrar()
 
     opciones = [("grpc.max_receive_message_length", 8 * 1024 * 1024)]
     servidor = grpc.aio.server(options=opciones)
@@ -54,22 +64,28 @@ async def servir(escucha: str) -> None:
         servidor.add_insecure_port(interno)
         modo = "SIN TLS (solo para desarrollo)"
     await servidor.start()
+    if metadatos:
+        metadatos.iniciar()
     log.info("nodo %s escuchando en %s (clientes) y %s (interno), %s, datos en %s, %d temporales borrados al arrancar",
              cfg.nodo.nombre, clientes, interno, modo, cfg.nodo.directorio_datos, borrados)
     try:
         await servidor.wait_for_termination()
     finally:
         await servidor.stop(5)
+        if metadatos:
+            await metadatos.detener()
         await servicio.cerrar()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="python -m dfsha.datanode")
     parser.add_argument("--escucha", default="0.0.0.0", help="interfaz en la que escucha (por defecto todas)")
+    parser.add_argument("--sin-metadatos", action="store_true",
+                        help="sin registrarse en los nodos de metadatos ni verificar tokens (solo pruebas)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
-        asyncio.run(servir(args.escucha))
+        asyncio.run(servir(args.escucha, args.sin_metadatos))
     except ErrorDeConfiguracion as e:
         log.error("configuración inválida: %s", e)
         return 2

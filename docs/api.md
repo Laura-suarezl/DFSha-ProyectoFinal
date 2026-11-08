@@ -12,7 +12,7 @@ El contrato está en [proto/dfsha.proto](../proto/dfsha.proto) (gRPC con Protoco
 | DataService | Cada nodo de datos | 50052 (TLS) | Cliente |
 | DataService | Cada nodo de datos | 50054 (TLS mutuo) | Otros nodos de datos (cadena y copias de reposición) |
 
-Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada nodo presenta un certificado de la CA interna emitido para su nombre DNS. Como gRPC para Python no permite pedir el certificado del cliente de forma opcional, el tráfico entre servidores va por puertos internos propios (50053 y 50054), que los grupos de seguridad cierran a los clientes. Los nodos se nombran siempre por nombre (`mdsN.dfsha.internal`, `dnN.dfsha.internal`), nunca por IP. La CA y los certificados se describen en [docs/tls.md](tls.md).
+Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada nodo presenta un certificado de la CA interna emitido para su nombre DNS. Como gRPC para Python no permite pedir el certificado del cliente de forma opcional, el tráfico entre servidores va por puertos internos propios (50053 y 50054), que los grupos de seguridad cierran a los clientes. Los nodos se nombran siempre por nombre (`mdsN.dfsha.internal`, `dnN.dfsha.internal`), nunca por IP. La CA y los certificados se describen en [docs/tls.md](tls.md). La relación entre nodos de datos y de metadatos está en [docs/nodos.md](nodos.md).
 
 ## Autenticación en cada llamada
 

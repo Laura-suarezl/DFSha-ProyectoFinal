@@ -37,6 +37,8 @@ class Cluster:
     puerto_datos: int = 50052              # DataService, para clientes con TLS (D9)
     puerto_metadatos_interno: int = 50053  # NodeService, solo servidores con TLS mutuo (D8)
     puerto_datos_interno: int = 50054      # cadena y copias entre nodos de datos, con TLS mutuo (D8)
+    # Los 3 nodos de metadatos, a los que cada nodo de datos envía latidos y avisos (D6)
+    nodos_metadatos: str = "mds1.dfsha.internal,mds2.dfsha.internal,mds3.dfsha.internal"
 
     def puertos(self) -> tuple[int, int, int, int]:
         return (self.puerto_metadatos, self.puerto_datos, self.puerto_metadatos_interno, self.puerto_datos_interno)
@@ -82,6 +84,8 @@ class Tiempos:
     jwt_ttl_s: int = 3600              # D8
     token_renovacion_ttl_s: int = 86400  # vida del token de renovación (D8)
     token_bloque_ttl_s: int = 600      # token de acceso por bloque (D8)
+    inventario_s: int = 3600           # BlockReport periódico de cada nodo de datos (D6)
+    revision_s: int = 86400            # revisión de huellas de todos los bloques (scrubbing, D6)
     auditoria_ttl_s: int = 7 * 24 * 3600
 
 
@@ -130,6 +134,7 @@ class Configuracion:
             (0 < t.latido_s < t.sospechoso_s < t.muerto_s,
              "tiempos debe cumplir latido_s < sospechoso_s < muerto_s"),
             (t.lider_ttl_s >= 2, "tiempos.lider_ttl_s debe ser al menos 2"),
+            (bool(self.cluster.nodos_metadatos.strip(",")), "cluster.nodos_metadatos no puede estar vacío"),
             (len(set(self.cluster.puertos())) == 4,
              "los cuatro puertos de cluster (metadatos, datos y sus internos) deben ser distintos"),
             (self.etcd.prefijo.startswith("/") and self.etcd.prefijo.endswith("/"),

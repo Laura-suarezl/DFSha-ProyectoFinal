@@ -11,8 +11,14 @@ solo con las copias que sí quedaron. El cliente decide si le bastan (W) o si re
 completo por otra cadena con el mismo id, lo que es seguro porque guardar dos veces el mismo
 bloque deja el mismo contenido.
 
-Pendiente para la etapa 6: verificar el token de acceso, el límite de peticiones simultáneas,
-los avisos BlockReceived a los nodos de metadatos y los latidos.
+Seguridad y carga (D8):
+- Cada escritura y lectura de un cliente trae un token de acceso por bloque (dfsha/common/tokens.py)
+  que se verifica con la clave HMAC recibida en Register. Otro nodo de datos, identificado por su
+  certificado en el puerto interno (cadena y copias), no necesita token.
+- Si el nodo ya atiende el máximo de peticiones simultáneas, responde OVERLOADED.
+
+Al guardar o borrar un bloque se llama a al_guardar o al_borrar, que avisan a los 3 nodos de
+metadatos (dfsha/datanode/latidos.py).
 """
 from __future__ import annotations
 
@@ -23,7 +29,9 @@ import grpc
 
 from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
+from dfsha.common import tokens
 from dfsha.common.errores import abortar, motivo_de
+from dfsha.common.tls import es_nodo, identidad_par
 from dfsha.datanode.almacen import Almacen, BloqueNoEncontrado, HuellaIncorrecta, IdInvalido, validar_id
 
 log = logging.getLogger(__name__)
@@ -102,8 +110,14 @@ class Reenvio:
 class ServicioDatos(pb_grpc.DataServiceServicer):
     def __init__(self, almacen: Almacen, nombre: str, tamano_trozo: int,
                  timeout_reenvio_s: float = 10.0,
-                 credenciales_salida: grpc.ChannelCredentials | None = None):
+                 credenciales_salida: grpc.ChannelCredentials | None = None,
+                 limite_peticiones: int = 64):
         self.almacen = almacen
+        self.clave_tokens: bytes | None = None   # sin clave (desarrollo sin metadatos) no se verifica
+        self.limite_peticiones = limite_peticiones
+        self.en_curso = 0
+        self.al_guardar = None                   # async (block_id, huella, tamaño)
+        self.al_borrar = None                    # async (block_id)
         self.nombre = nombre
         self.tamano_trozo = tamano_trozo
         self.timeout_reenvio_s = timeout_reenvio_s
@@ -123,12 +137,42 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
         for canal in self._canales.values():
             await canal.close()
 
+    async def _admitir(self, context) -> None:
+        if self.en_curso >= self.limite_peticiones:
+            await abortar(context, pb.REASON_OVERLOADED, "el nodo alcanzó su límite de peticiones simultáneas",
+                          retry_after_ms=200)
+        self.en_curso += 1
+
+    async def _autorizar(self, context, token: bytes, block_id: str, operacion: str) -> None:
+        if self.clave_tokens is None or es_nodo(identidad_par(context), "dn"):
+            return
+        try:
+            tokens.verificar(self.clave_tokens, token, block_id, operacion)
+        except (tokens.TokenBloqueInvalido, KeyError, ValueError) as e:
+            await abortar(context, pb.REASON_TOKEN_INVALID, f"token de acceso inválido: {e}")
+
+    def _aviso(self, funcion, *args) -> None:
+        if funcion:
+            asyncio.ensure_future(funcion(*args))
+
+    async def borrar(self, block_id: str) -> None:
+        if await asyncio.to_thread(self.almacen.borrar, block_id):
+            self._aviso(self.al_borrar, block_id)
+
     async def WriteBlock(self, request_iterator, context):
+        await self._admitir(context)
+        try:
+            return await self._escribir(request_iterator, context)
+        finally:
+            self.en_curso -= 1
+
+    async def _escribir(self, request_iterator, context):
         entrada = request_iterator.__aiter__()
         try:
             primero = await entrada.__anext__()
         except StopAsyncIteration:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "stream vacío")
+        await self._autorizar(context, primero.access_token, primero.block_id, tokens.ESCRIBIR)
         try:
             escritura = self.almacen.nueva_escritura(primero.block_id)
         except IdInvalido:
@@ -175,6 +219,7 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
                 reenvio.cancelar()
             raise
 
+        self._aviso(self.al_guardar, primero.block_id, primero.block_checksum, escritura.tamano)
         guardado_en = [self.nombre]
         if reenvio:
             guardado_en += await reenvio.terminar()
@@ -182,6 +227,15 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
         return pb.WriteResult(block_id=primero.block_id, stored_on=guardado_en)
 
     async def ReadBlock(self, request, context):
+        await self._admitir(context)
+        try:
+            await self._autorizar(context, request.access_token, request.block_id, tokens.LEER)
+            async for trozo in self._leer(request, context):
+                yield trozo
+        finally:
+            self.en_curso -= 1
+
+    async def _leer(self, request, context):
         try:
             huella, tamano = self.almacen.info(request.block_id)
         except (BloqueNoEncontrado, IdInvalido):
