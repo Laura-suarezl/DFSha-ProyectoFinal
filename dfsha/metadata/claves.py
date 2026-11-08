@@ -52,7 +52,11 @@ class EnvoltorioKms:
 
     def __init__(self, clave: str, region: str):
         import boto3                                     # solo hace falta en AWS
-        self._kms = boto3.client("kms", region_name=region)
+        from botocore.config import Config
+        # Con plazos cortos, si KMS no responde el arranque falla y el contenedor se reinicia, en vez
+        # de quedarse esperando para siempre
+        self._kms = boto3.client("kms", region_name=region, config=Config(
+            connect_timeout=5, read_timeout=10, retries={"max_attempts": 3}))
         self._clave = clave
 
     async def envolver(self, datos: bytes) -> bytes:

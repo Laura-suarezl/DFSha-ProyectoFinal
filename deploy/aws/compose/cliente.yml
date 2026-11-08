@@ -1,0 +1,13 @@
+# Máquina cliente en AWS. La CLI corre en este contenedor:
+#   sudo docker compose -f /opt/dfsha/compose.yml exec cliente dfsha login <usuario>
+services:
+  cliente:
+    image: dfsha:dev
+    network_mode: host
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+    volumes: [/etc/dfsha/certs/ca.crt:/etc/dfsha/certs/ca.crt:ro, /opt/dfsha/trabajo:/trabajo]
+    working_dir: /trabajo
+    environment:
+      DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
+      DFSHA_SESION: /trabajo/.sesion.json

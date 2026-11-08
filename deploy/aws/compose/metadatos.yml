@@ -1,0 +1,45 @@
+# Máquina de metadatos en AWS: miembro de etcd y nodo de metadatos en la misma máquina (D1, D10).
+# Red del anfitrión: los puertos quedan en la IP de la máquina y los nombres los resuelve Route 53.
+# nodo.sh escribe NODO (mds1, mds2 o mds3) en .env.
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.35
+    network_mode: host
+    restart: unless-stopped
+    volumes: [/etc/dfsha/certs:/certs:ro, /var/lib/etcd:/etcd-data]
+    environment:
+      ETCD_NAME: ${NODO}
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_INITIAL_CLUSTER: mds1=https://mds1.dfsha.internal:2380,mds2=https://mds2.dfsha.internal:2380,mds3=https://mds3.dfsha.internal:2380
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_INITIAL_CLUSTER_TOKEN: dfsha
+      ETCD_LISTEN_PEER_URLS: https://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: https://0.0.0.0:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://${NODO}.dfsha.internal:2380
+      ETCD_ADVERTISE_CLIENT_URLS: https://${NODO}.dfsha.internal:2379
+      ETCD_CLIENT_CERT_AUTH: "true"
+      ETCD_PEER_CLIENT_CERT_AUTH: "true"
+      ETCD_TRUSTED_CA_FILE: /certs/ca.crt
+      ETCD_PEER_TRUSTED_CA_FILE: /certs/ca.crt
+      ETCD_CERT_FILE: /certs/${NODO}.crt
+      ETCD_KEY_FILE: /certs/${NODO}.key
+      ETCD_PEER_CERT_FILE: /certs/${NODO}.crt
+      ETCD_PEER_KEY_FILE: /certs/${NODO}.key
+      ETCD_AUTO_COMPACTION_MODE: periodic
+      ETCD_AUTO_COMPACTION_RETENTION: 1h
+
+  metadatos:
+    image: dfsha:dev
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [etcd]
+    command: ["python", "-m", "dfsha.metadata"]
+    volumes: [/etc/dfsha/certs:/etc/dfsha/certs:ro]
+    environment:
+      DFSHA_NODO_NOMBRE: ${NODO}.dfsha.internal
+      DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
+      DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/${NODO}.crt
+      DFSHA_TLS_LLAVE: /etc/dfsha/certs/${NODO}.key
+      DFSHA_ETCD_DESTINO: dns:///dfsha.internal:2379
+      DFSHA_KMS_CLAVE: alias/dfsha-kek
+      DFSHA_KMS_REGION: us-east-1

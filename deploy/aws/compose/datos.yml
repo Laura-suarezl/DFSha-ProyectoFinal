@@ -1,0 +1,15 @@
+# Máquina de datos en AWS (D5, D10). nodo.sh escribe NODO (dn1 a dn4) y ZONA en .env.
+services:
+  datos:
+    image: dfsha:dev
+    network_mode: host
+    restart: unless-stopped
+    command: ["python", "-m", "dfsha.datanode"]
+    volumes: [/etc/dfsha/certs:/etc/dfsha/certs:ro, /var/lib/dfsha:/var/lib/dfsha]
+    environment:
+      DFSHA_NODO_NOMBRE: ${NODO}.dfsha.internal
+      DFSHA_NODO_ZONA: ${ZONA}
+      DFSHA_NODO_DIRECTORIO_DATOS: /var/lib/dfsha
+      DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
+      DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/${NODO}.crt
+      DFSHA_TLS_LLAVE: /etc/dfsha/certs/${NODO}.key
