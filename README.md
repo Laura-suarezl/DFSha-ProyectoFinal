@@ -44,6 +44,6 @@ python scripts/generar_codigo.py   # genera dfsha/_gen/ desde proto/ (repetir si
 pytest
 ```
 
-El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md).
+El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md) y la API de DFSha en [docs/api.md](docs/api.md).
 
 **Nota:** si el repositorio está dentro de una carpeta sincronizada (OneDrive, Dropbox, Google Drive), crea el entorno virtual fuera de ella, por ejemplo en `~/.venvs/dfsha`. La sincronización bloquea los archivos del entorno y la instalación falla.

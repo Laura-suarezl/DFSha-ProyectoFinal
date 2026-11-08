@@ -1,0 +1,456 @@
+// Contrato gRPC de DFSha (decisión D9 de docs/decisiones.md).
+// Documentación de cada operación, cabeceras y errores en docs/api.md.
+//
+// Puertos:
+//   50051  MetadataService, AdminService y NodeService, en los 3 nodos de metadatos.
+//          Solo el líder atiende escrituras. Un seguidor responde FAILED_PRECONDITION
+//          con el motivo REASON_NOT_LEADER y el nombre del líder.
+//   50052  DataService, en cada nodo de datos.
+//
+// Todos los canales usan TLS 1.3. Entre servidores, TLS mutuo (D8).
+// Los nombres de los nodos son nombres DNS (dnN.dfsha.internal), nunca IPs (D7).
+
+syntax = "proto3";
+
+package dfsha.v1;
+
+import "google/protobuf/empty.proto";
+
+// =====================================================================
+// Tipos comunes
+// =====================================================================
+
+enum EntryType {
+  ENTRY_TYPE_UNSPECIFIED = 0;
+  ENTRY_TYPE_DIRECTORY = 1;
+  ENTRY_TYPE_FILE = 2;
+}
+
+// Modo de apertura (RF3, D2).
+enum OpenMode {
+  OPEN_MODE_UNSPECIFIED = 0;
+  OPEN_MODE_READ = 1;        // r: leer
+  OPEN_MODE_WRITE = 2;       // w: crear o reemplazar (toma el lock del archivo entero)
+  OPEN_MODE_APPEND = 3;      // a: anexar al final
+  OPEN_MODE_READ_WRITE = 4;  // rw: leer y modificar por bloque
+}
+
+enum NodeState {
+  NODE_STATE_UNSPECIFIED = 0;
+  NODE_STATE_ALIVE = 1;            // latido en los últimos 10 s
+  NODE_STATE_SUSPECT = 2;          // entre 10 y 30 s sin latido
+  NODE_STATE_DEAD = 3;             // más de 30 s sin latido, se re-replica
+  NODE_STATE_DECOMMISSIONING = 4;  // retiro planificado en curso
+}
+
+// Ubicación de un bloque de una versión, tal como la entrega el líder al cliente.
+message BlockLocation {
+  uint32 index = 1;               // posición del bloque en el archivo
+  string block_id = 2;            // b-xxxxxxxxxxxxxxxx
+  string cipher_checksum = 3;     // SHA-256 del bloque cifrado (H)
+  string plain_checksum = 4;      // SHA-256 del bloque en claro (h)
+  uint64 size = 5;                // bytes en claro
+  repeated string replicas = 6;   // "dnN.dfsha.internal:50052", ordenadas por cercanía
+  bytes access_token = 7;         // token de acceso de lectura firmado con HMAC (10 min)
+}
+
+// =====================================================================
+// MetadataService (puerto 50051)
+// =====================================================================
+
+service MetadataService {
+  // Sesión
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Refresh(RefreshRequest) returns (LoginResponse);
+  rpc Renew(RenewRequest) returns (RenewResponse);
+
+  // Espacio de nombres (RF1)
+  rpc List(PathRequest) returns (ListResponse);
+  rpc Stat(PathRequest) returns (FileInfo);
+  rpc Mkdir(PathRequest) returns (google.protobuf.Empty);
+  rpc Rmdir(PathRequest) returns (google.protobuf.Empty);
+  rpc Remove(PathRequest) returns (google.protobuf.Empty);
+  rpc Rename(RenameRequest) returns (google.protobuf.Empty);
+
+  // Acceso a archivos (RF2, RF3)
+  rpc Open(OpenRequest) returns (OpenResponse);
+  rpc GetBlockLocations(BlockRangeRequest) returns (BlockLocations);
+  rpc AllocateBlocks(AllocateBlocksRequest) returns (AllocateBlocksResponse);
+  rpc Lock(LockRequest) returns (LockResponse);
+  rpc Unlock(UnlockRequest) returns (google.protobuf.Empty);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Close(CloseRequest) returns (google.protobuf.Empty);
+  rpc ReportBadBlock(BadBlockReport) returns (google.protobuf.Empty);
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string access_token = 1;           // JWT firmado con Ed25519, válido 1 h
+  string refresh_token = 2;
+  int64 expires_at_unix_ms = 3;
+  string session_id = 4;             // lease de etcd de 30 s
+  uint32 renew_interval_s = 5;       // 10
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message RenewRequest {
+  string session_id = 1;
+}
+
+message RenewResponse {
+  uint32 ttl_s = 1;                  // tiempo de vida que le queda a la sesión
+}
+
+message PathRequest {
+  string path = 1;                   // ruta absoluta, se normaliza en el servidor
+}
+
+message Entry {
+  string name = 1;
+  EntryType type = 2;
+  uint64 size = 3;
+  uint64 version = 4;
+  string owner = 5;
+  int64 modified_at_unix_ms = 6;
+}
+
+message ListResponse {
+  repeated Entry entries = 1;
+}
+
+message FileInfo {
+  Entry entry = 1;
+  string file_checksum = 2;          // hash_archivo: SHA-256 de la concatenación de las h
+  uint64 block_size = 3;
+  uint32 replication = 4;
+}
+
+message RenameRequest {
+  string source = 1;
+  string destination = 2;
+}
+
+message OpenRequest {
+  string path = 1;
+  OpenMode mode = 2;
+  string session_id = 3;
+}
+
+message OpenResponse {
+  string fd = 1;                     // descriptor del archivo abierto
+  string file_id = 2;
+  uint64 version = 3;                // versión vista al abrir
+  uint64 size = 4;
+  uint64 block_size = 5;
+  string file_checksum = 6;
+  bytes file_key = 7;                // clave del archivo (DEK), solo al dueño y por TLS
+  uint32 read_lease_s = 8;           // 60
+  repeated BlockLocation blocks = 9;
+  repeated LockGrant locks = 10;     // en modo WRITE trae el lock del archivo entero
+}
+
+message BlockRangeRequest {
+  string fd = 1;
+  uint32 first_index = 2;
+  uint32 last_index = 3;             // inclusivo
+}
+
+message BlockLocations {
+  repeated BlockLocation blocks = 1;
+}
+
+message AllocateBlocksRequest {
+  string fd = 1;
+  repeated uint32 indices = 2;       // índices de los bloques nuevos (hasta 8 por llamada)
+}
+
+message AllocatedBlock {
+  uint32 index = 1;
+  string block_id = 2;               // id nuevo (copy-on-write)
+  repeated string chain = 3;         // cadena de nodos de datos, el primero recibe del cliente
+  bytes access_token = 4;            // token de acceso de escritura firmado con HMAC (10 min)
+}
+
+message AllocateBlocksResponse {
+  repeated AllocatedBlock blocks = 1;
+}
+
+// Objetivo de un lock (D4).
+message LockTarget {
+  oneof target {
+    uint32 block_index = 1;          // un bloque
+    bool end_of_file = 2;            // el final del archivo, para anexar
+    bool whole_file = 3;             // el archivo entero, para reemplazar o borrar
+  }
+}
+
+message LockRequest {
+  string fd = 1;
+  repeated LockTarget targets = 2;   // se piden en orden ascendente de índice
+  uint32 wait_s = 3;                 // espera máxima en la cola, 10 por defecto
+}
+
+message LockGrant {
+  LockTarget target = 1;
+  int64 fencing_token = 2;           // revisión de creación de la clave del lock en etcd
+  string current_block_id = 3;       // id vigente del bloque (base para el commit)
+  int64 expires_at_unix_ms = 4;
+}
+
+message LockResponse {
+  repeated LockGrant grants = 1;
+}
+
+message UnlockRequest {
+  string fd = 1;
+  repeated LockTarget targets = 2;   // vacío: libera todos los locks del descriptor
+}
+
+message CommittedBlock {
+  uint32 index = 1;
+  string new_block_id = 2;
+  string base_block_id = 3;          // vacío si el bloque es nuevo
+  string cipher_checksum = 4;
+  string plain_checksum = 5;
+  uint64 size = 6;
+  int64 fencing_token = 7;           // token del lock con que se modificó
+}
+
+message CommitRequest {
+  string fd = 1;
+  string op_id = 2;                  // identificador único, permite reintentar sin duplicar
+  repeated CommittedBlock blocks = 3;
+  uint64 new_size = 4;
+  bool replace_all = 5;              // true: la versión nueva tiene exactamente estos bloques
+}
+
+message CommitResponse {
+  uint64 version = 1;
+  string file_checksum = 2;
+}
+
+message CloseRequest {
+  string fd = 1;                     // libera los locks y el arriendo de lectura del descriptor
+}
+
+message BadBlockReport {
+  string block_id = 1;
+  string node = 2;
+  string reason = 3;                 // por ejemplo, huella distinta o sin respuesta
+}
+
+// =====================================================================
+// AdminService (puerto 50051, solo rol administrador)
+// =====================================================================
+
+service AdminService {
+  rpc CreateUser(CreateUserRequest) returns (google.protobuf.Empty);
+  rpc SetQuota(SetQuotaRequest) returns (google.protobuf.Empty);
+  rpc ListNodes(google.protobuf.Empty) returns (NodeList);
+  rpc Decommission(DecommissionRequest) returns (google.protobuf.Empty);
+}
+
+message CreateUserRequest {
+  string username = 1;
+  string password = 2;
+  bool admin = 3;
+  uint64 quota_bytes = 4;
+}
+
+message SetQuotaRequest {
+  string username = 1;
+  uint64 quota_bytes = 2;
+}
+
+message NodeStatus {
+  string name = 1;                   // dnN.dfsha.internal
+  string zone = 2;
+  NodeState state = 3;
+  uint64 free_bytes = 4;
+  uint64 used_bytes = 5;
+  uint64 block_count = 6;
+  int64 last_heartbeat_unix_ms = 7;
+}
+
+message NodeList {
+  repeated NodeStatus nodes = 1;
+  string leader = 2;                 // nodo de metadatos líder
+}
+
+message DecommissionRequest {
+  string node = 1;
+}
+
+// =====================================================================
+// DataService (puerto 50052, en cada nodo de datos)
+// =====================================================================
+
+service DataService {
+  // Escritura en cadena: el cliente envía al primer nodo, que reenvía al siguiente
+  // mientras recibe. Responde cuando el bloque quedó guardado y verificado.
+  rpc WriteBlock(stream ChunkPayload) returns (WriteResult);
+  rpc ReadBlock(ReadBlockRequest) returns (stream ChunkPayload);
+  // Diagnóstico: qué bloques tiene el nodo y si su huella coincide (D6).
+  rpc CheckBlockHealth(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Trozo de un bloque. El tamaño de data es configurable, 1 MB por defecto (D5).
+// El primer trozo lleva block_id, block_checksum, downstream_nodes y access_token.
+// Los siguientes solo sequence_number y data. El último lleva is_last_chunk = true.
+message ChunkPayload {
+  string block_id = 1;
+  uint32 sequence_number = 2;
+  bytes data = 3;
+  bool is_last_chunk = 4;
+  string block_checksum = 5;         // SHA-256 del bloque completo cifrado
+  repeated string downstream_nodes = 6;  // nodos restantes de la cadena
+  bytes access_token = 7;            // token de acceso por bloque (D8)
+}
+
+message WriteResult {
+  string block_id = 1;
+  repeated string stored_on = 2;     // nodos de la cadena que guardaron y verificaron su copia
+}
+
+message ReadBlockRequest {
+  string block_id = 1;
+  bytes access_token = 2;
+}
+
+message HealthCheckRequest {
+  repeated string block_ids = 1;     // vacío: todos los bloques del nodo
+}
+
+message BlockHealth {
+  string block_id = 1;
+  bool present = 2;
+  bool checksum_ok = 3;
+  uint64 size = 4;
+}
+
+message HealthCheckResponse {
+  string node = 1;
+  repeated BlockHealth blocks = 2;
+}
+
+// =====================================================================
+// NodeService (puerto 50051, los nodos de datos llaman a los 3 nodos de metadatos)
+// =====================================================================
+
+service NodeService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc BlockReceived(BlockNotice) returns (google.protobuf.Empty);
+  rpc BlockDeleted(BlockNotice) returns (google.protobuf.Empty);
+  rpc BlockReport(BlockReportRequest) returns (HeartbeatResponse);
+}
+
+message RegisterRequest {
+  string node = 1;                   // dnN.dfsha.internal
+  string zone = 2;
+  uint64 capacity_bytes = 3;
+  uint64 free_bytes = 4;
+}
+
+message RegisterResponse {
+  uint32 heartbeat_interval_s = 1;   // 3
+  bytes block_token_key = 2;         // clave HMAC para verificar los tokens de acceso (canal mTLS)
+  string block_token_key_id = 3;
+}
+
+message HeartbeatRequest {
+  string node = 1;
+  uint64 free_bytes = 2;
+  uint64 used_bytes = 3;
+  uint32 active_transfers = 4;
+}
+
+// Orden del líder a un nodo de datos, que viaja en la respuesta al latido (D6).
+message NodeCommand {
+  oneof command {
+    ReplicateCommand replicate = 1;
+    DeleteCommand remove = 2;
+  }
+}
+
+message ReplicateCommand {
+  string block_id = 1;
+  string block_checksum = 2;
+  repeated string targets = 3;       // nodos que deben recibir una copia
+}
+
+message DeleteCommand {
+  repeated string block_ids = 1;
+}
+
+message HeartbeatResponse {
+  bool from_leader = 1;              // los seguidores responden sin órdenes
+  repeated NodeCommand commands = 2;
+}
+
+message BlockNotice {
+  string node = 1;
+  string block_id = 2;
+  string block_checksum = 3;
+  uint64 size = 4;
+}
+
+message StoredBlock {
+  string block_id = 1;
+  string block_checksum = 2;
+  uint64 size = 3;
+}
+
+message BlockReportRequest {
+  string node = 1;
+  repeated StoredBlock blocks = 2;
+}
+
+// =====================================================================
+// Errores
+// =====================================================================
+
+// Motivo propio de DFSha. Viaja junto al código de estado de gRPC en los metadatos
+// de cierre de la llamada, en la clave "dfsha-error-bin" (ErrorDetail serializado).
+enum Reason {
+  REASON_UNSPECIFIED = 0;
+  REASON_TOKEN_INVALID = 1;          // UNAUTHENTICATED
+  REASON_FORBIDDEN = 2;              // PERMISSION_DENIED
+  REASON_NOT_FOUND = 3;              // NOT_FOUND
+  REASON_EXISTS = 4;                 // ALREADY_EXISTS
+  REASON_DIR_NOT_EMPTY = 5;          // FAILED_PRECONDITION
+  REASON_NOT_LEADER = 6;             // FAILED_PRECONDITION
+  REASON_VERSION_CONFLICT = 7;       // ABORTED
+  REASON_LEASE_EXPIRED = 8;          // ABORTED
+  REASON_LOCKED = 9;                 // ABORTED
+  REASON_NO_QUORUM = 10;             // UNAVAILABLE
+  REASON_INSUFFICIENT_REPLICAS = 11; // UNAVAILABLE
+  REASON_QUOTA_EXCEEDED = 12;        // RESOURCE_EXHAUSTED
+  REASON_NO_SPACE = 13;              // RESOURCE_EXHAUSTED
+  REASON_OVERLOADED = 14;            // RESOURCE_EXHAUSTED (límite de peticiones simultáneas)
+  REASON_CHECKSUM_MISMATCH = 15;     // DATA_LOSS
+  REASON_BAD_OFFSET = 16;            // INVALID_ARGUMENT
+}
+
+message ErrorDetail {
+  Reason reason = 1;
+  string message = 2;
+  string leader = 3;                 // con REASON_NOT_LEADER
+  string path = 4;                   // con NOT_FOUND, EXISTS
+  uint32 block_index = 5;            // con VERSION_CONFLICT
+  string current_block_id = 6;       // con VERSION_CONFLICT
+  string lock_owner = 7;             // con LOCKED
+  int64 lock_expires_at_unix_ms = 8; // con LOCKED
+  uint32 retry_after_ms = 9;         // con UNAVAILABLE y OVERLOADED
+  uint64 used_bytes = 10;            // con QUOTA_EXCEEDED
+  uint64 limit_bytes = 11;           // con QUOTA_EXCEEDED
+  string block_id = 12;              // con CHECKSUM_MISMATCH
+  uint32 entries = 13;               // con DIR_NOT_EMPTY
+}
