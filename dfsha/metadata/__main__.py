@@ -36,6 +36,7 @@ from dfsha.metadata.claves import cargar_secretos, crear_clave_local, envoltorio
 from dfsha.metadata.etcd import ClienteEtcd, EtcdNoDisponible
 from dfsha.metadata.lider import Elector
 from dfsha.metadata.nodos import ServicioNodos
+from dfsha.metadata.recuperacion import Recuperacion
 from dfsha.metadata.servicio import Nucleo, ServicioAdministracion, ServicioMetadatos
 from dfsha.metadata.usuarios import RepositorioUsuarios, UsuarioInvalido
 
@@ -88,6 +89,8 @@ async def servir(escucha: str) -> None:
     cli = cliente_etcd(cfg)
     nucleo = await construir(cfg, cli)
     nucleo.elector.iniciar()
+    recuperacion = Recuperacion(nucleo)
+    recuperacion.iniciar()
 
     servidor = grpc.aio.server()
     registrar_servicios(servidor, nucleo)
@@ -119,6 +122,7 @@ async def servir(escucha: str) -> None:
     finally:
         await servidor.stop(5)
         await interno.stop(5)
+        await recuperacion.detener()
         await nucleo.elector.detener()
         await cli.cerrar()
 

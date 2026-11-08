@@ -263,6 +263,8 @@ class ServicioMetadatos(pb_grpc.MetadataServiceServicer):
     async def ReportBadBlock(self, request, context, identidad: Identidad):
         nodo = request.node.split(":", 1)[0]
         self.nucleo.nodos.bloque_borrado(nodo, request.block_id)     # deja de contar esa copia
+        if "huella" in request.reason:                               # copia dañada: que el nodo la borre
+            self.nucleo.nodos.encolar(nodo, pb.NodeCommand(remove=pb.DeleteCommand(block_ids=[request.block_id])))
         await self.nucleo.auditoria.registrar(f"ReportBadBlock {request.block_id} {nodo} {request.reason}",
                                               identidad.usuario, ip_de(context.peer()), "ok")
         return empty_pb2.Empty()
@@ -304,6 +306,17 @@ class ServicioAdministracion(pb_grpc.AdminServiceServicer):
             await abortar(context, pb.REASON_NOT_FOUND, "el usuario no existe", path=request.username)
         await n.auditoria.registrar(f"SetQuota {request.username} {request.quota_bytes}", identidad.usuario,
                                     ip_de(context.peer()), "ok")
+        return empty_pb2.Empty()
+
+    @atender(solo_admin=True)
+    async def Decommission(self, request, context, identidad: Identidad):
+        n = self.nucleo
+        if request.node not in n.nodos.nodos:
+            await abortar(context, pb.REASON_NOT_FOUND, "nodo de datos desconocido", path=request.node)
+        clave = f"{n.cfg.etcd.prefijo}decommission/{request.node}"
+        await n.cli.txn(n.comparaciones_lider(), [n.cli.op_poner(clave, str(int(time.time() * 1000)))])
+        n.nodos.retirando.add(request.node)
+        await n.auditoria.registrar(f"Decommission {request.node}", identidad.usuario, ip_de(context.peer()), "ok")
         return empty_pb2.Empty()
 
     @atender(solo_admin=True)

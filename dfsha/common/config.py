@@ -67,6 +67,7 @@ class Almacenamiento:
     confirmaciones: int = 2            # W
     tamano_trozo: int = 1 * MIB        # trozo del stream, configurable (D5)
     bloques_por_asignacion: int = 8    # bloques por llamada a AllocateBlocks
+    paralelismo: int = 4               # bloques que el cliente transfiere a la vez (D5)
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ class Tiempos:
     token_bloque_ttl_s: int = 600      # token de acceso por bloque (D8)
     inventario_s: int = 3600           # BlockReport periódico de cada nodo de datos (D6)
     revision_s: int = 86400            # revisión de huellas de todos los bloques (scrubbing, D6)
+    recuperacion_s: int = 10           # ciclo de re-replicación y recolector en el líder (D6)
     auditoria_ttl_s: int = 7 * 24 * 3600
 
 

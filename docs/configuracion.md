@@ -34,6 +34,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `almacenamiento.replicas` | 3 | R, mínimo 2 | D5 |
 | `almacenamiento.confirmaciones` | 2 | W, copias verificadas para dar un bloque por escrito | D5 |
 | `almacenamiento.tamano_trozo` | 1 MiB | Trozo del stream de bloques, menor que el límite de 4 MiB de gRPC | D5 |
+| `almacenamiento.paralelismo` | 4 | Bloques que el cliente transfiere a la vez | D5 |
 | `almacenamiento.bloques_por_asignacion` | 8 | Bloques por llamada a AllocateBlocks | D9 |
 | `tiempos.sesion_ttl_s` | 30 | Vida de la sesión, que también cubre locks y arriendos de lectura | D4 |
 | `tiempos.renovacion_s` | 10 | Intervalo de Renew, como máximo la mitad de la sesión | D4 |
@@ -47,6 +48,7 @@ cfg.almacenamiento.tamano_bloque, cfg.tiempos.sesion_ttl_s
 | `tiempos.token_renovacion_ttl_s` | 86400 | Vida del token de renovación (1 día) | D8 |
 | `tiempos.token_bloque_ttl_s` | 600 | Vida del token de acceso por bloque | D8 |
 | `tiempos.inventario_s`, `tiempos.revision_s` | 3600, 86400 | Inventario periódico y revisión de huellas de cada nodo de datos | D6 |
+| `tiempos.recuperacion_s` | 10 | Ciclo de re-replicación y recolector del líder | D6 |
 | `tiempos.auditoria_ttl_s` | 604800 | Vida de un registro de auditoría (7 días) | D8 |
 | `limites.peticiones_simultaneas` | 64 | Límite por servidor antes de responder OVERLOADED | D8 |
 | `kms.clave`, `kms.region` | `alias/dfsha-kek`, `us-east-1` | Clave maestra que envuelve las claves del clúster y las de archivo. `archivo:<ruta>` usa una clave local de desarrollo (ver [docs/metadatos.md](metadatos.md)) | D8 |

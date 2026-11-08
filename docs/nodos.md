@@ -14,6 +14,14 @@ Relación entre los nodos de datos y los 3 nodos de metadatos (D5, D6 y D8). El 
 
 Cada nodo de metadatos guarda en memoria el estado de cada nodo de datos (vivo, sospechoso a los 10 s sin latido, muerto a los 30 s), qué bloques tiene cada uno y las órdenes pendientes. La cadena de un bloque nuevo se elige entre los nodos vivos, primero de zonas distintas y con más espacio libre. AdminService.ListNodes muestra este estado.
 
+## Recuperación
+
+El líder revisa cada `tiempos.recuperacion_s` el estado del clúster (`dfsha/metadata/recuperacion.py`).
+- **Re-replicación.** Cada bloque referenciado debe tener R copias en nodos vivos. Si tiene menos, el líder ordena a un nodo que lo tiene copiarlo a otros.
+- **Recolector.** Borra los manifiestos que no son la versión vigente ni tienen arriendos de lectura, los bloques en construcción de más de una hora y, pasada la gracia tras un cambio de líder, ordena borrar los bloques que nada referencia.
+- **Retiro planificado.** Decommission marca el nodo en etcd. Sus copias dejan de contar, se copian a otros nodos y después se le ordena borrarlas.
+- **Bloque dañado.** ReportBadBlock con huella distinta quita esa copia de la cuenta y ordena borrarla.
+
 ## Tokens de acceso por bloque
 
 Cada token sirve para un bloque, una operación (leer o escribir) y 10 minutos, y va firmado con HMAC-SHA256. El nodo de datos lo verifica en el puerto de clientes sin consultar a nadie. En el puerto interno, otro nodo de datos se identifica con su certificado y no necesita token. Si el nodo atiende ya el máximo de peticiones simultáneas responde OVERLOADED.

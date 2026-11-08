@@ -32,7 +32,8 @@ sys.path.insert(0, str(RAIZ))
 
 from dfsha._gen import dfsha_pb2 as pb  # noqa: E402
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc  # noqa: E402
-from dfsha.common.config import Tls  # noqa: E402
+from dfsha.client.datos import Transferencia, bajar, subir  # noqa: E402
+from dfsha.common.config import Tls, cargar  # noqa: E402
 from dfsha.common.errores import detalle_de, motivo_de  # noqa: E402
 from dfsha.common.tls import credenciales_canal  # noqa: E402
 
@@ -222,6 +223,21 @@ async def main() -> int:
     print(f"{fuera}, que no estaba en la cadena, tiene el bloque: {salud.blocks[0].present}")
     if salud.blocks[0].present:
         fallas.append(f"{fuera} no debía tener el bloque")
+
+    # Biblioteca del cliente: put y get de un archivo de 40 MiB (3 bloques cifrados, en paralelo)
+    direcciones = {f"{n}.dfsha.internal:50052": f"127.0.0.1:{p}" for n, p in PUBLICADOS.items() if n.startswith("dn")}
+    transferencia = Transferencia(cargar(entorno={}), credenciales_canal(Tls(ca=str(CA))), direcciones)
+    contenido = os.urandom(40 * MIB)
+    async with canal(lider) as c:
+        meta = pb_grpc.MetadataServiceStub(c)
+        subido = await subir(cargar(entorno={}), meta, token_admin, sesion, f"/{usuario}/cliente.bin", contenido,
+                             transferencia)
+        bajado = await bajar(cargar(entorno={}), meta, token_admin, sesion, f"/{usuario}/cliente.bin", transferencia)
+    await transferencia.cerrar()
+    igual = hashlib.sha256(bajado).digest() == hashlib.sha256(contenido).digest()
+    print(f"Cliente: put de 40 MiB (versión {subido.version}) y get {'idéntico' if igual else 'DISTINTO'}")
+    if not igual:
+        fallas.append("el get del cliente no devolvió el mismo contenido")
 
     for interno in (50054, 50053, 2379):
         abierto = puerto_abierto(interno)

@@ -46,7 +46,8 @@ docker compose -f deploy/compose/docker-compose.dev.yml down -v
 5. Abre un archivo para escribir, pide un bloque con AllocateBlocks y comprueba que el nodo de datos rechaza una escritura sin token.
 6. Escribe un bloque de 16 MiB por la cadena que asignó el líder, confirma con Commit, abre el archivo para leer y lee el bloque desde sus tres réplicas.
 7. Comprueba que el nodo que no estaba en la cadena no tiene el bloque.
-8. Comprueba que los puertos internos y el de etcd no se alcanzan desde el anfitrión.
+8. Con la biblioteca del cliente sube un archivo de 40 MiB (3 bloques cifrados en paralelo) y lo baja verificando las huellas.
+9. Comprueba que los puertos internos y el de etcd no se alcanzan desde el anfitrión.
 
 Resultado esperado.
 
@@ -66,6 +67,7 @@ Lectura desde dn2: idéntica
 Lectura desde dn4: idéntica
 El líder ubica el bloque en: ['dn1', 'dn2', 'dn4']
 dn3, que no estaba en la cadena, tiene el bloque: False
+Cliente: put de 40 MiB (versión 1) y get idéntico
 Puerto interno 50054 alcanzable desde el anfitrión: False
 Puerto interno 50053 alcanzable desde el anfitrión: False
 Puerto interno 2379 alcanzable desde el anfitrión: False
