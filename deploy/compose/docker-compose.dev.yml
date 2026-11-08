@@ -184,6 +184,18 @@ services:
       DFSHA_TLS_CERTIFICADO: /etc/dfsha/certs/dn4.crt
       DFSHA_TLS_LLAVE: /etc/dfsha/certs/dn4.key
 
+  # Máquina cliente: la CLI dentro de la red, como en la EC2 cliente de AWS.
+  #   docker compose -f deploy/compose/docker-compose.dev.yml exec cliente dfsha login admin
+  cliente:
+    image: dfsha:dev
+    pull_policy: never
+    command: ["sleep", "infinity"]
+    networks: [dfsha]
+    volumes: [../certs/out/ca.crt:/etc/dfsha/certs/ca.crt:ro]
+    environment:
+      DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
+      DFSHA_SESION: /tmp/dfsha-sesion.json
+
 networks:
   dfsha:
 

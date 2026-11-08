@@ -307,6 +307,16 @@ class Archivos:
         nuevo_uso = u["usado"] + len(indices) * cfg.almacenamiento.tamano_bloque
         if u["cuota"] and nuevo_uso > u["cuota"]:
             raise ErrorDfsha(pb.REASON_QUOTA_EXCEEDED, "se supera la cuota", used_bytes=u["usado"], limit_bytes=u["cuota"])
+        # Un índice que ya tuvo cadena en este descriptor es un reintento. La cadena se corta en el
+        # primer nodo sin copia, así que ese es el que falló y la cadena nueva lo evita (D5)
+        fallidos: dict[int, set[str]] = {}
+        for kv in await self.cli.rango(self.k("uc", info["archivo"], fd, "")):
+            previo = json.loads(kv.value)
+            bid = kv.key.decode().rsplit("/", 1)[1]
+            con_copia = set(self.n.nodos.ubicaciones(bid))
+            fallido = next((n for n in previo["cadena"] if n not in con_copia), None)
+            if fallido:
+                fallidos.setdefault(previo["i"], set()).add(fallido)
         cadena = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas)
         if len(cadena) < cfg.almacenamiento.confirmaciones:
             raise ErrorDfsha(pb.REASON_NO_SPACE, "no hay suficientes nodos de datos vivos")
@@ -314,6 +324,9 @@ class Archivos:
         respuesta, operaciones = pb.AllocateBlocksResponse(), []
         for j, indice in enumerate(indices):
             rotada = cadena[j % len(cadena):] + cadena[:j % len(cadena)]
+            if fallidos.get(indice):
+                otra = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas, excluir=fallidos[indice])
+                rotada = otra if len(otra) >= cfg.almacenamiento.confirmaciones else rotada
             direcciones = [f"{rotada[0]}:{cfg.cluster.puerto_datos}"] + [f"{n}:{cfg.cluster.puerto_datos_interno}"
                                                                         for n in rotada[1:]]
             bid = _id("b-")
