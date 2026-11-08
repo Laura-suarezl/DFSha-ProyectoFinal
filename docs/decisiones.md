@@ -4,6 +4,7 @@ Equipo: Laura Carolina Suárez Lozano y Tomás Castaño Peña. Arquitectura asig
 
 Regla de la fusión: en cada punto se adopta la opción que **menos simplifica los requisitos**, aunque eso signifique quedarse con un solo diseño, y la fusión debe ser coherente. Después de cada decisión se comprueba si alguna opción de los dos puntos siguientes queda descartada por compatibilidad.
 
+Origen de cada decisión: L y T identifican los dos diseños individuales de la Fase I, el de Laura Carolina Suárez Lozano (L) y el de Tomás Castaño Peña (T). "Nueva" indica algo que no estaba en ninguno de los dos.
 
 | # | Punto | Decisión | Origen | Estado |
 |---|---|---|---|---|
@@ -158,7 +159,7 @@ Regla de la fusión: en cada punto se adopta la opción que **menos simplifica l
 
 **Decisión.**
 - **Protocolo.** gRPC con TLS en todos los canales (ambos diseños).
-- **Servicios.** MetadataService (sesión, directorios, Open, GetBlockLocations, AllocateBlocks, Lock, Unlock, Renew, Commit, Close, ReportBadBlock), AdminService (usuarios, cuotas, estado de nodos, Decommission), DataService (WriteBlock y ReadBlock por streaming, más CheckBlockHealth de diagnóstico) y NodeService (Register, Heartbeat, BlockReceived, BlockReport), atendido por los tres nodos de metadatos. Una operación por acción.
+- **Servicios.** MetadataService (sesión, directorios, Open, GetBlockLocations, AllocateBlocks, Lock, Unlock, Renew, Commit, Close, ReportBadBlock), AdminService (usuarios, cuotas, estado de nodos, Decommission), DataService (WriteBlock y ReadBlock por streaming, más CheckBlockHealth de diagnóstico) y NodeService (Register, Heartbeat, BlockReceived, BlockDeleted, BlockReport), atendido por los tres nodos de metadatos. Una operación por acción.
 - **Mensaje de trozos.** ChunkPayload de T (block_id, sequence_number, data, is_last_chunk, block_checksum, downstream_nodes), con el token de acceso por bloque agregado (D8). Tamaño del trozo configurable (D5).
 - **Puertos.** Plano de control y administración en 50051, nodos de datos en 50052, etcd en 2379 (clientes) y 2380 (pares).
 - **Errores.** Tabla de L. LOCKED pasa de DEADLINE_EXCEEDED a ABORTED, junto con VERSION_CONFLICT y LEASE_EXPIRED, porque DEADLINE_EXCEEDED también lo genera gRPC cuando vence el plazo del propio cliente y no se podrían distinguir.

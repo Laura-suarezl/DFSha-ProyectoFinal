@@ -24,6 +24,7 @@ etcd guarda el estado persistente del plano de control (D1). Este documento defi
 | `/dfsha/uc/<id del archivo>/<descriptor>/<id del bloque>` | Bloque en construcción: índice, cadena asignada, sesión y fecha | Persistente | Se crea en AllocateBlocks. El commit borra de una vez todo el prefijo de su descriptor, y el recolector lo borra pasada una hora si nunca se confirmó |
 | `/dfsha/sessions/<id de sesión>` | Usuario y fecha de inicio | Atada al lease de la sesión (30 s) | Desaparece sola si la sesión deja de renovarse |
 | `/dfsha/locks/<id del archivo>/<objetivo>/<lease>` | La crea la API Lock de etcd | Atada al lease de la sesión | Unlock o vencimiento de la sesión |
+| `/dfsha/locks/<id del archivo>/intencion/<id de sesión>-<objetivo>` | Vacío. Intención de un lock de bloque o de `fin` (jerarquía de locks) | Atada al lease de la sesión | Se borra al liberar ese lock o al vencer la sesión |
 | `/dfsha/readleases/<id del archivo>/<versión>/<id de sesión>` | Vacío | Atada al lease de la sesión | Close o vencimiento de la sesión |
 | `/dfsha/ops/<op_id>` | Resultado del commit ya aplicado | Atada a un lease propio de 1 h | Vence sola |
 | `/dfsha/decommission/<nodo>` | Fecha de inicio del retiro | Persistente | Hasta que el nodo queda vacío |
@@ -41,7 +42,12 @@ La raíz del espacio de cada usuario es la entrada `/dfsha/ns/root/<usuario>`.
 4. Si la espera supera los 10 s, el líder cancela la llamada y responde ABORTED con el motivo LOCKED. Se comprobó con etcd v3.5.35 que, al cancelar, la entrada del que esperaba desaparece sola de la cola.
 5. Si la sesión deja de renovarse, el lease vence y etcd borra la sesión, sus locks y sus arriendos de lectura a la vez.
 
-**Jerarquía de locks.** El lock `archivo` excluye a los locks de bloque y al de `fin` del mismo archivo. Como solo el líder concede locks, la jerarquía la aplica él. Antes de conceder un lock de bloque o de `fin` comprueba que no haya un lock `archivo` concedido ni en espera, y al conceder un lock `archivo` espera, observando el prefijo con Watch, a que no quede ningún lock de bloque ni de `fin`.
+**Jerarquía de locks.** El lock `archivo` excluye a los locks de bloque y al de `fin` del mismo archivo. Como solo el líder concede locks, la jerarquía la aplica él, con claves de intención.
+1. **Lock de bloque o de `fin`.** Bajo un candado local por archivo, el líder comprueba que no haya ningún lock `archivo` concedido ni en espera y escribe la intención, atada a la sesión. Si hay un lock `archivo`, espera con Watch a que desaparezca y vuelve a intentarlo. Después pide el lock del bloque en la cola de etcd.
+2. **Lock `archivo`.** Bajo el mismo candado local, el líder entra en la cola de etcd y espera a ver su propia entrada. Desde ese momento ningún lock de bloque nuevo puede registrar su intención. Cuando obtiene el lock, espera con Watch a que no quede ninguna intención.
+3. **Liberar un lock de bloque** es liberar el lock en etcd y borrar su intención.
+
+El candado local cubre solo la comprobación y el registro, nunca la espera en la cola, así que dos locks de bloques distintos no se esperan entre sí. Watch se abre desde la revisión siguiente a la que se leyó al contar, así no se pierde el aviso de que el prefijo quedó vacío. El prototipo de prototipos/etcd-cluster comprobó el orden correcto con un bloque ocupado, un lock `archivo` en espera y un lock de bloque pedido después.
 
 ## Comparación de liderazgo
 
@@ -67,12 +73,25 @@ El momento en que esa transacción se confirma es el único punto de commit.
 
 | Límite de etcd (valor por defecto) | Consecuencia en DFSha |
 |---|---|
-| 128 operaciones por transacción (`--max-txn-ops`) | Un commit tiene 8 operaciones fijas (3 comparaciones y 5 escrituras) más una comparación por lock. Un mismo commit puede modificar hasta unos 120 bloques con lock propio (cerca de 1,9 GB). Para cambios mayores, el cliente confirma por partes con fsync(), y un reemplazo completo usa un solo lock `archivo` |
-| 1,5 MiB por petición (`--max-request-bytes`) | Cada bloque ocupa unos 200 bytes en el manifiesto, así que un manifiesto admite unos 7800 bloques (cerca de 120 GB por archivo) |
+| 128 operaciones por lista en una transacción (`--max-txn-ops`). El límite se aplica por separado a las comparaciones, a las operaciones si se cumple y a las de si no se cumple (comprobado, 128 y 128 pasan y 129 se rechazan) | Un commit tiene 3 comparaciones fijas más una por lock, y 5 escrituras. Un mismo commit puede modificar hasta 125 bloques con lock propio (cerca de 2 GB). Para cambios mayores, el cliente confirma por partes con fsync(), y un reemplazo completo usa un solo lock `archivo` |
+| 1,5 MiB por petición (`--max-request-bytes`, comprobado, 1,4 MiB pasa y 1,6 MiB se rechaza) | Cada bloque ocupa unos 200 bytes en el manifiesto, así que un manifiesto admite unos 7800 bloques (cerca de 120 GB por archivo) |
 | 2 GB de base de datos (`--quota-backend-bytes`) | Suficiente para los metadatos del proyecto. Se activa la compactación periódica del historial (`--auto-compaction-mode=periodic`, `--auto-compaction-retention=1h`) |
+
+## Comportamiento comprobado en un clúster de 3 miembros
+
+Resultados del prototipo de prototipos/etcd-cluster (etcd v3.5.35, varias corridas con los mismos resultados).
+
+| Situación | Comportamiento |
+|---|---|
+| Cae el líder del servicio de metadatos | Otro candidato asume en unos 3 s (el lease del líder dura 3 s). Si renuncia de forma ordenada, en milisegundos |
+| Un líder que perdió el liderazgo intenta escribir | La comparación de liderazgo rechaza la transacción |
+| Cae un miembro de etcd, incluido el líder de Raft | Ninguna operación falla. El keep-alive de la sesión se reconecta solo, y los locks conservan su token |
+| Caen 2 de los 3 miembros (sin mayoría) | Las escrituras se rechazan en 5 s (el servicio responde NO_QUORUM). Al volver la mayoría se escribe de nuevo al instante, con la sesión y los locks intactos |
+| Un lock se pide estando ocupado | Espera en la cola y, si se agota la espera, la entrada del que esperaba se limpia sola |
 
 ## Contrato con etcd en el código
 
 - Los .proto oficiales de etcd están en `proto/etcd/`, copiados de la versión v3.5.35 sin las anotaciones de gogoproto ni de google.api, que no cambian el formato de los mensajes. Los genera `scripts/vendor_etcd_protos.py`.
 - El código Python se genera con `scripts/generar_codigo.py` en `dfsha/_gen/` (no se versiona).
+- El cliente de los nodos de metadatos está en `dfsha/metadata/etcd.py`. Reintenta solo las operaciones idempotentes, con un plazo total de 5 s por llamada, y nunca reintenta una transacción, porque si etcd cae a mitad no se sabe si se aplicó.
 - DFSha usa estos servicios de etcd, KV (lecturas, escrituras y transacciones), Lease (sesiones y leases propios), Watch (esperas sobre prefijos), Lock (cola de locks) y Election (líder de metadatos).

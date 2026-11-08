@@ -25,6 +25,7 @@ Las decisiones, con sus alternativas y su justificación, están en [docs/decisi
 | `dfsha/datanode/` | Nodos de datos |
 | `dfsha/client/` | Biblioteca y CLI del cliente |
 | `scripts/` | Descarga de los .proto de etcd y generación del código Python |
+| `prototipos/` | Prototipos de los riesgos técnicos, con sus resultados |
 | `deploy/` | Dockerfiles, Compose, CA interna y scripts de AWS |
 | `tests/` | Pruebas unitarias y de integración |
 | `experiments/` | Experimentos E0 a E11 y sus resultados |
@@ -44,6 +45,8 @@ python scripts/generar_codigo.py   # genera dfsha/_gen/ desde proto/ (repetir si
 pytest
 ```
 
-El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md) y la API de DFSha en [docs/api.md](docs/api.md).
+El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md), la API de DFSha en [docs/api.md](docs/api.md) y los parámetros de configuración en [docs/configuracion.md](docs/configuracion.md).
+
+Las pruebas de integración necesitan un etcd en marcha y se saltan si no está configurado. Cómo ejecutarlas está en [prototipos/etcd-cluster/README.md](prototipos/etcd-cluster/README.md).
 
 **Nota:** si el repositorio está dentro de una carpeta sincronizada (OneDrive, Dropbox, Google Drive), crea el entorno virtual fuera de ella, por ejemplo en `~/.venvs/dfsha`. La sincronización bloquea los archivos del entorno y la instalación falla.

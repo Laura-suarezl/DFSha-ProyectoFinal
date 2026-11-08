@@ -37,3 +37,6 @@ include = ["dfsha*"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integracion: necesita un etcd en marcha (variable DFSHA_PRUEBA_ETCD)",
+]

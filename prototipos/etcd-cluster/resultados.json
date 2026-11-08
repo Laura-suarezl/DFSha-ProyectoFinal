@@ -1,0 +1,111 @@
+{
+  "1_eleccion": {
+    "primer_lider": "mds3",
+    "nuevo_lider_tras_caida": "mds2",
+    "segundos_hasta_nuevo_lider": 2.81,
+    "ttl_del_lease_de_lider_s": 3,
+    "lider_tras_renuncia": "mds1",
+    "segundos_tras_renuncia": 0.004,
+    "lider_visible_por_api": "mds1"
+  },
+  "2_comparacion_de_liderazgo": {
+    "escritura_del_lider_caido": false,
+    "escritura_del_lider_vigente": true
+  },
+  "3_caida_de_cada_miembro_de_etcd": {
+    "vueltas": [
+      {
+        "miembro_detenido": "dfsha-proto-etcd3",
+        "era_lider_de_raft": true,
+        "operaciones_fallidas_en_12_s": 0,
+        "ttl_de_la_sesion_s": 27,
+        "lock_con_el_mismo_token": true,
+        "commit_con_token": true,
+        "segundos_hasta_reincorporarse": 0.01
+      },
+      {
+        "miembro_detenido": "dfsha-proto-etcd1",
+        "era_lider_de_raft": true,
+        "operaciones_fallidas_en_12_s": 0,
+        "ttl_de_la_sesion_s": 28,
+        "lock_con_el_mismo_token": true,
+        "commit_con_token": true,
+        "segundos_hasta_reincorporarse": 0.0
+      },
+      {
+        "miembro_detenido": "dfsha-proto-etcd2",
+        "era_lider_de_raft": true,
+        "operaciones_fallidas_en_12_s": 0,
+        "ttl_de_la_sesion_s": 28,
+        "lock_con_el_mismo_token": true,
+        "commit_con_token": true,
+        "segundos_hasta_reincorporarse": 0.0
+      }
+    ],
+    "reconexiones_del_keepalive": 2,
+    "sesion_viva_al_final": true
+  },
+  "3b_perdida_de_mayoria": {
+    "miembros_detenidos": [
+      "dfsha-proto-etcd1",
+      "dfsha-proto-etcd2"
+    ],
+    "escritura_sin_mayoria": "rechazada tras 5.0 s (EtcdNoDisponible, el servicio responde NO_QUORUM)",
+    "segundos_hasta_escribir_de_nuevo": 0.01,
+    "ttl_de_la_sesion_tras_recuperar_s": 29,
+    "lock_con_el_mismo_token": true
+  },
+  "4_jerarquia_de_locks": {
+    "eventos": [
+      [
+        0.01,
+        "A obtiene el bloque 7"
+      ],
+      [
+        0.51,
+        "C pide el bloque 3"
+      ],
+      [
+        1.02,
+        "A libera el bloque 7"
+      ],
+      [
+        1.02,
+        "B obtiene el archivo entero"
+      ],
+      [
+        1.53,
+        "B libera el archivo"
+      ],
+      [
+        1.54,
+        "C obtiene el bloque 3"
+      ]
+    ],
+    "orden_correcto": true
+  },
+  "5_commit_con_reintento": {
+    "escritor_1": [
+      "versión 2",
+      1
+    ],
+    "escritor_2_bloque_distinto": [
+      "versión 3",
+      2
+    ],
+    "version_final": 3,
+    "bloque_3": "b-w1-3",
+    "bloque_7": "b-w2-7",
+    "escritor_3_con_base_vieja": [
+      "VERSION_CONFLICT",
+      2
+    ]
+  },
+  "6_limites_de_etcd": {
+    "txn_128_comparaciones_y_128_escrituras": "ok",
+    "txn_129_comparaciones": "rechazada (etcdserver: too many operations in txn request)",
+    "txn_129_escrituras": "rechazada (etcdserver: too many operations in txn request)",
+    "peticion_de_1_4_MiB": "ok",
+    "peticion_de_1_6_MiB": "rechazada (etcdserver: request is too large)"
+  }
+}
