@@ -24,6 +24,7 @@ Las decisiones, con sus alternativas y su justificación, están en [docs/decisi
 | `dfsha/metadata/` | Nodos de metadatos |
 | `dfsha/datanode/` | Nodos de datos |
 | `dfsha/client/` | Biblioteca y CLI del cliente |
+| `scripts/` | Descarga de los .proto de etcd y generación del código Python |
 | `deploy/` | Dockerfiles, Compose, CA interna y scripts de AWS |
 | `tests/` | Pruebas unitarias y de integración |
 | `experiments/` | Experimentos E0 a E11 y sus resultados |
@@ -39,6 +40,10 @@ Python 3.12, gRPC (grpcio), etcd 3.5, cryptography, argon2-cffi, PyJWT, boto3, t
 python -m venv .venv
 .venv\Scripts\activate          # en Linux o macOS: source .venv/bin/activate
 pip install -e ".[dev]"
+python scripts/generar_codigo.py   # genera dfsha/_gen/ desde proto/ (repetir si cambia un .proto)
+pytest
 ```
+
+El código generado no se versiona, así que hay que generarlo después de clonar. Los .proto de etcd ya están en `proto/etcd/`. Solo hace falta volver a descargarlos con `python scripts/vendor_etcd_protos.py` si se cambia la versión de etcd. El esquema de claves en etcd está en [docs/etcd-esquema.md](docs/etcd-esquema.md).
 
 **Nota:** si el repositorio está dentro de una carpeta sincronizada (OneDrive, Dropbox, Google Drive), crea el entorno virtual fuera de ella, por ejemplo en `~/.venvs/dfsha`. La sincronización bloquea los archivos del entorno y la instalación falla.
