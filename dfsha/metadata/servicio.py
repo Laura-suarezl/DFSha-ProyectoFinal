@@ -1,8 +1,7 @@
 """MetadataService y AdminService del nodo de metadatos (D1, D4, D8 y D9, docs/metadatos.md).
 
-Esta primera parte atiende el inicio de sesión, la renovación de la sesión y la administración
-de usuarios. Las operaciones de archivos llegan en las siguientes etapas y por ahora responden
-UNIMPLEMENTED (lo hace la clase base generada).
+Atiende la sesión, la administración y las operaciones de archivos, que delega en
+dfsha/metadata/archivos.py.
 
 Reglas comunes:
 - Solo el líder atiende (docs/api.md). Un seguidor responde NOT_LEADER con el nombre del líder.
@@ -23,10 +22,12 @@ from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
 from dfsha.common.config import Configuracion
 from dfsha.common.errores import abortar
+from dfsha.metadata.archivos import Archivos, ErrorDfsha
 from dfsha.metadata.auditoria import Auditoria, ip_de
 from dfsha.metadata.autenticacion import Autenticador, ComparacionFallida, Identidad, TokenInvalido
 from dfsha.metadata.etcd import ClienteEtcd, EtcdNoDisponible
 from dfsha.metadata.lider import Elector
+from dfsha.metadata.nodos import RegistroNodos, lista_de_nodos
 from dfsha.metadata.usuarios import RepositorioUsuarios, UsuarioInvalido
 
 ESPERA_SIN_QUORUM_MS = 1000
@@ -42,13 +43,17 @@ class Nucleo:
     """Lo que comparten los servicios de un nodo de metadatos."""
 
     def __init__(self, cfg: Configuracion, cli: ClienteEtcd, elector: Elector, usuarios: RepositorioUsuarios,
-                 autenticador: Autenticador, auditoria: Auditoria):
+                 autenticador: Autenticador, auditoria: Auditoria, nodos: RegistroNodos | None = None,
+                 envoltorio=None):
         self.cfg = cfg
         self.cli = cli
         self.elector = elector
         self.usuarios = usuarios
         self.autenticador = autenticador
         self.auditoria = auditoria
+        self.nodos = nodos or RegistroNodos(cfg.tiempos)
+        self.envoltorio = envoltorio           # clave maestra (KMS o archivo) para las claves de archivo
+        self.archivos = Archivos(self)
         self.prefijo_sesiones = f"{cfg.etcd.prefijo}sessions/"
         self.en_curso = 0                            # peticiones atendiéndose ahora mismo
 
@@ -117,6 +122,10 @@ def atender(solo_admin: bool = False, autenticado: bool = True):
                                                          ip_de(context.peer()), "denegado, no es administrador")
                         await abortar(context, pb.REASON_FORBIDDEN, "la operación exige el rol administrador")
                 return await metodo(self, request, context, identidad)
+            except ErrorDfsha as e:
+                if e.motivo is None:
+                    await context.abort(grpc.StatusCode.INVALID_ARGUMENT, e.mensaje)
+                await abortar(context, e.motivo, e.mensaje, **e.datos)
             except (DejoDeSerLider, ComparacionFallida):
                 await _responder_no_lider(nucleo, context)
             except EtcdNoDisponible:
@@ -187,6 +196,77 @@ class ServicioMetadatos(pb_grpc.MetadataServiceServicer):
             await abortar(context, pb.REASON_LEASE_EXPIRED, "la sesión venció")
         return pb.RenewResponse(ttl_s=ttl)
 
+    # ---------------------------------------------------------------- RF1
+    @atender()
+    async def List(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.listar(identidad.usuario, request.path)
+
+    @atender()
+    async def Stat(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.stat(identidad.usuario, request.path)
+
+    @atender()
+    async def Mkdir(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.mkdir(identidad.usuario, request.path)
+        return empty_pb2.Empty()
+
+    @atender()
+    async def Rmdir(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.rmdir(identidad.usuario, request.path)
+        return empty_pb2.Empty()
+
+    @atender()
+    async def Remove(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.remove(identidad.usuario, request.path)
+        await self.nucleo.auditoria.registrar(f"Remove {request.path}", identidad.usuario, ip_de(context.peer()), "ok")
+        return empty_pb2.Empty()
+
+    @atender()
+    async def Rename(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.rename(identidad.usuario, request.source, request.destination)
+        return empty_pb2.Empty()
+
+    # ---------------------------------------------------------------- RF3
+    @atender()
+    async def Open(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.abrir(identidad.usuario, request.path, request.mode, request.session_id)
+
+    @atender()
+    async def GetBlockLocations(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.ubicaciones(identidad.usuario, request.fd, request.first_index,
+                                                      request.last_index)
+
+    @atender()
+    async def AllocateBlocks(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.asignar(identidad.usuario, request.fd, list(request.indices))
+
+    @atender()
+    async def Lock(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.bloquear(identidad.usuario, request.fd, request.targets, request.wait_s)
+
+    @atender()
+    async def Unlock(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.liberar(identidad.usuario, request.fd, request.targets)
+        return empty_pb2.Empty()
+
+    @atender()
+    async def Commit(self, request, context, identidad: Identidad):
+        return await self.nucleo.archivos.commit(identidad.usuario, request.fd, request.op_id, request.blocks,
+                                                 request.new_size, request.replace_all)
+
+    @atender()
+    async def Close(self, request, context, identidad: Identidad):
+        await self.nucleo.archivos.cerrar(identidad.usuario, request.fd)
+        return empty_pb2.Empty()
+
+    @atender()
+    async def ReportBadBlock(self, request, context, identidad: Identidad):
+        nodo = request.node.split(":", 1)[0]
+        self.nucleo.nodos.bloque_borrado(nodo, request.block_id)     # deja de contar esa copia
+        await self.nucleo.auditoria.registrar(f"ReportBadBlock {request.block_id} {nodo} {request.reason}",
+                                              identidad.usuario, ip_de(context.peer()), "ok")
+        return empty_pb2.Empty()
+
 
 class ServicioAdministracion(pb_grpc.AdminServiceServicer):
     def __init__(self, nucleo: Nucleo):
@@ -225,3 +305,7 @@ class ServicioAdministracion(pb_grpc.AdminServiceServicer):
         await n.auditoria.registrar(f"SetQuota {request.username} {request.quota_bytes}", identidad.usuario,
                                     ip_de(context.peer()), "ok")
         return empty_pb2.Empty()
+
+    @atender(solo_admin=True)
+    async def ListNodes(self, request, context, identidad: Identidad):
+        return lista_de_nodos(self.nucleo.nodos, self.nucleo.elector.nombre_nodo)

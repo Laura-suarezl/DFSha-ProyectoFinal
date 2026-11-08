@@ -62,12 +62,12 @@ async def _con_reintentos(que: str, corrutina_fabrica, intentos: int = 30):
 
 async def construir(cfg: Configuracion, cli: ClienteEtcd) -> Nucleo:
     prefijo = cfg.etcd.prefijo
-    secretos = await _con_reintentos("cargar las claves del clúster",
-                                     lambda: cargar_secretos(cli, envoltorio_desde(cfg.kms), prefijo))
+    envoltorio = envoltorio_desde(cfg.kms)
+    secretos = await _con_reintentos("cargar las claves del clúster", lambda: cargar_secretos(cli, envoltorio, prefijo))
     elector = Elector(cli, prefijo + ELECCION, cfg.nodo.nombre, cfg.tiempos.lider_ttl_s)
     autenticador = Autenticador(cli, secretos, prefijo, cfg.tiempos.jwt_ttl_s, cfg.tiempos.token_renovacion_ttl_s)
     return Nucleo(cfg, cli, elector, RepositorioUsuarios(cli, prefijo), autenticador,
-                  Auditoria(cli, prefijo, cfg.tiempos.auditoria_ttl_s))
+                  Auditoria(cli, prefijo, cfg.tiempos.auditoria_ttl_s), envoltorio=envoltorio)
 
 
 def registrar_servicios(servidor: grpc.aio.Server, nucleo: Nucleo) -> None:

@@ -17,21 +17,27 @@
 #
 # Cada nodo de metadatos comparte la red de su miembro de etcd (network_mode), igual que en AWS,
 # donde los dos corren en la misma máquina. Por eso los nombres mdsN.dfsha.internal y
-# dfsha.internal están en los servicios de etcd. etcd todavía va sin TLS y pasa a TLS mutuo más
-# adelante en la etapa 7.
+# dfsha.internal están en los servicios de etcd. etcd usa TLS mutuo con el certificado de su máquina
+# (mdsN), tanto con los clientes como entre miembros.
 
 name: dfsha-dev
 
 x-etcd: &etcd
   image: quay.io/coreos/etcd:v3.5.35
   networks: [dfsha]
+  volumes:
+    - ../certs/out:/certs:ro
 
 x-etcd-entorno: &etcd-entorno
-  ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+  ETCD_INITIAL_CLUSTER: etcd1=https://mds1.dfsha.internal:2380,etcd2=https://mds2.dfsha.internal:2380,etcd3=https://mds3.dfsha.internal:2380
   ETCD_INITIAL_CLUSTER_STATE: new
   ETCD_INITIAL_CLUSTER_TOKEN: dfsha-dev
-  ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
-  ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  ETCD_LISTEN_PEER_URLS: https://0.0.0.0:2380
+  ETCD_LISTEN_CLIENT_URLS: https://0.0.0.0:2379
+  ETCD_CLIENT_CERT_AUTH: "true"
+  ETCD_PEER_CLIENT_CERT_AUTH: "true"
+  ETCD_TRUSTED_CA_FILE: /certs/ca.crt
+  ETCD_PEER_TRUSTED_CA_FILE: /certs/ca.crt
   ETCD_DATA_DIR: /etcd-data
   ETCD_AUTO_COMPACTION_MODE: periodic
   ETCD_AUTO_COMPACTION_RETENTION: 1h
@@ -56,7 +62,7 @@ x-metadatos-entorno: &metadatos-entorno
   DFSHA_TLS_HABILITADO: "true"
   DFSHA_TLS_CA: /etc/dfsha/certs/ca.crt
   DFSHA_ETCD_DESTINO: dns:///dfsha.internal:2379
-  DFSHA_ETCD_TLS: "false"
+  DFSHA_ETCD_TLS: "true"
   DFSHA_KMS_CLAVE: archivo:/etc/dfsha/certs/kek-dev.bin
 
 x-nodo-entorno: &nodo-entorno
@@ -72,8 +78,12 @@ services:
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd1
-      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
-      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://mds1.dfsha.internal:2380
+      ETCD_ADVERTISE_CLIENT_URLS: https://mds1.dfsha.internal:2379
+      ETCD_CERT_FILE: /certs/mds1.crt
+      ETCD_KEY_FILE: /certs/mds1.key
+      ETCD_PEER_CERT_FILE: /certs/mds1.crt
+      ETCD_PEER_KEY_FILE: /certs/mds1.key
   etcd2:
     <<: *etcd
     networks: {dfsha: {aliases: [dfsha.internal, mds2.dfsha.internal]}}
@@ -81,8 +91,12 @@ services:
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd2
-      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
-      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://mds2.dfsha.internal:2380
+      ETCD_ADVERTISE_CLIENT_URLS: https://mds2.dfsha.internal:2379
+      ETCD_CERT_FILE: /certs/mds2.crt
+      ETCD_KEY_FILE: /certs/mds2.key
+      ETCD_PEER_CERT_FILE: /certs/mds2.crt
+      ETCD_PEER_KEY_FILE: /certs/mds2.key
   etcd3:
     <<: *etcd
     networks: {dfsha: {aliases: [dfsha.internal, mds3.dfsha.internal]}}
@@ -90,8 +104,12 @@ services:
     environment:
       <<: *etcd-entorno
       ETCD_NAME: etcd3
-      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
-      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: https://mds3.dfsha.internal:2380
+      ETCD_ADVERTISE_CLIENT_URLS: https://mds3.dfsha.internal:2379
+      ETCD_CERT_FILE: /certs/mds3.crt
+      ETCD_KEY_FILE: /certs/mds3.key
+      ETCD_PEER_CERT_FILE: /certs/mds3.crt
+      ETCD_PEER_KEY_FILE: /certs/mds3.key
 
   mds1:
     <<: *metadatos

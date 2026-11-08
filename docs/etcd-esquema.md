@@ -23,6 +23,7 @@ etcd guarda el estado persistente del plano de control (D1). Este documento defi
 | `/dfsha/files/<id del archivo>` | Puntero a la versión vigente: versión, tamaño, tamaño de bloque, R, hash del archivo y clave del archivo envuelta con KMS | Persistente | Cambia en cada commit |
 | `/dfsha/manifests/<id del archivo>/<versión>` | Manifiesto de la versión: lista de bloques con índice, id, huella cifrada, huella en claro y tamaño | Persistente | Se crea en el commit y lo borra el recolector |
 | `/dfsha/uc/<id del archivo>/<descriptor>/<id del bloque>` | Bloque en construcción: índice, cadena asignada, sesión y fecha | Persistente | Se crea en AllocateBlocks. El commit borra de una vez todo el prefijo de su descriptor, y el recolector lo borra pasada una hora si nunca se confirmó |
+| `/dfsha/fds/<descriptor>` | Archivo, usuario, sesión, modo de apertura y versión vista | Atada al lease de la sesión | Open lo crea, Commit actualiza la versión y Close lo borra |
 | `/dfsha/sessions/<id de sesión>` | Usuario y fecha de inicio. El id es el del lease, en 16 caracteres hexadecimales | Atada al lease de la sesión (30 s) | Desaparece sola si la sesión deja de renovarse |
 | `/dfsha/locks/<id del archivo>/<objetivo>/<lease>` | La crea la API Lock de etcd | Atada al lease de la sesión | Unlock o vencimiento de la sesión |
 | `/dfsha/locks/<id del archivo>/intencion/<id de sesión>-<objetivo>` | Vacío. Intención de un lock de bloque o de `fin` (jerarquía de locks) | Atada al lease de la sesión | Se borra al liberar ese lock o al vencer la sesión |

@@ -54,30 +54,6 @@ def crear_admin(usuario: str, contrasena: str) -> None:
                    check=True, capture_output=True)
 
 
-# Mientras no existe AllocateBlocks, los tokens de acceso se piden a mds1, que tiene la clave HMAC
-_TOKENS = """
-import asyncio, sys
-from dfsha.common import tokens
-from dfsha.common.config import cargar
-from dfsha.metadata.__main__ import cliente_etcd
-from dfsha.metadata.claves import cargar_secretos, envoltorio_desde
-async def main():
-    cfg = cargar()
-    async with cliente_etcd(cfg) as cli:
-        s = await cargar_secretos(cli, envoltorio_desde(cfg.kms), cfg.etcd.prefijo)
-    for op in (tokens.ESCRIBIR, tokens.LEER):
-        print(tokens.emitir(s.hmac_bloques, sys.argv[1], op, "humo", 600).decode())
-asyncio.run(main())
-"""
-
-
-def tokens_de_prueba(block_id: str) -> tuple[bytes, bytes]:
-    r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "exec", "-T", "mds1", "python", "-c", _TOKENS, block_id],
-                       check=True, capture_output=True, text=True)
-    escritura, lectura = r.stdout.split()
-    return escritura.encode(), lectura.encode()
-
-
 async def buscar_lider(usuario: str, contrasena: str, espera_s: float = 60) -> tuple[str, pb.LoginResponse]:
     """Inicia sesión en mds1 y sigue la respuesta NOT_LEADER hasta el líder.
 
@@ -132,7 +108,7 @@ async def probar_metadatos(fallas: list[str]) -> None:
         if [n.state for n in nodos.nodes] != [pb.NODE_STATE_ALIVE] * 4:
             fallas.append("el líder no ve los 4 nodos de datos vivos")
     await comprobar_seguidores(lider, admin, contrasena, fallas)
-    return lider, token
+    return lider, token, sesion.session_id, admin
 
 
 async def esperar_nodos(adm, token, espera_s: float = 20) -> pb.NodeList:
@@ -183,13 +159,21 @@ async def main() -> int:
         async with canal(nodo) as c:
             await asyncio.wait_for(c.channel_ready(), 30)
 
-    lider, token_admin = await probar_metadatos(fallas)
+    lider, token_admin, sesion, usuario = await probar_metadatos(fallas)
 
     datos = os.urandom(16 * MIB)
     huella = hashlib.sha256(datos).hexdigest()
-    block_id = f"b-{int.from_bytes(os.urandom(8), 'big'):016x}"
-    escritura, lectura = tokens_de_prueba(block_id)
-    async with canal("dn1") as c:
+    # Flujo real de escritura: Open, AllocateBlocks, cadena, Commit y Close
+    ruta = f"/{usuario}/humo.bin"
+    async with canal(lider) as c:
+        meta = pb_grpc.MetadataServiceStub(c)
+        abierto = await meta.Open(pb.OpenRequest(path=ruta, mode=pb.OPEN_MODE_WRITE, session_id=sesion),
+                                  metadata=token_admin)
+        asignado = (await meta.AllocateBlocks(pb.AllocateBlocksRequest(fd=abierto.fd, indices=[0]),
+                                              metadata=token_admin)).blocks[0]
+    block_id, escritura = asignado.block_id, asignado.access_token
+    primero = asignado.chain[0].split(".")[0]
+    async with canal(primero) as c:
         try:
             await pb_grpc.DataServiceStub(c).WriteBlock(trozos(block_id, datos, []))
             sin_token = "aceptada"
@@ -198,14 +182,29 @@ async def main() -> int:
         print(f"Escritura sin token de acceso: {sin_token}")
         if sin_token != "TOKEN_INVALID":
             fallas.append("un nodo de datos aceptó una escritura sin token")
-        r = await pb_grpc.DataServiceStub(c).WriteBlock(
-            trozos(block_id, datos, ["dn2.dfsha.internal:50054", "dn3.dfsha.internal:50054"], escritura))
+        r = await pb_grpc.DataServiceStub(c).WriteBlock(trozos(block_id, datos, list(asignado.chain[1:]), escritura))
     copias = list(r.stored_on)
-    print(f"Escritura de 16 MiB por la cadena: copias en {copias}")
-    if copias != ["dn1.dfsha.internal", "dn2.dfsha.internal", "dn3.dfsha.internal"]:
+    print(f"Escritura de 16 MiB por la cadena que asignó el líder: {len(copias)} copias")
+    if len(copias) != 3:
         fallas.append("la cadena no guardó las 3 copias")
+    await asyncio.sleep(0.5)                                            # avisos BlockReceived al líder
+    async with canal(lider) as c:
+        meta = pb_grpc.MetadataServiceStub(c)
+        confirmado = await meta.Commit(pb.CommitRequest(
+            fd=abierto.fd, op_id=secrets.token_hex(8), new_size=len(datos), replace_all=True, blocks=[pb.CommittedBlock(
+                index=0, new_block_id=block_id, cipher_checksum=huella, plain_checksum=huella, size=len(datos),
+                fencing_token=abierto.locks[0].fencing_token)]), metadata=token_admin)
+        await meta.Close(pb.CloseRequest(fd=abierto.fd), metadata=token_admin)
+        leido_meta = await meta.Open(pb.OpenRequest(path=ruta, mode=pb.OPEN_MODE_READ, session_id=sesion),
+                                     metadata=token_admin)
+        await meta.Close(pb.CloseRequest(fd=leido_meta.fd), metadata=token_admin)
+    print(f"Commit: versión {confirmado.version}, {ruta} tiene {leido_meta.size} bytes en {len(leido_meta.blocks)} bloque")
+    if confirmado.version != 1 or leido_meta.size != len(datos):
+        fallas.append("el commit no publicó el archivo")
+    lectura = leido_meta.blocks[0].access_token
+    con_copia = sorted(x.split(".")[0] for x in leido_meta.blocks[0].replicas)
 
-    for nodo in ("dn1", "dn2", "dn3"):
+    for nodo in con_copia:
         async with canal(nodo) as c:
             leido = b"".join([t.data async for t in pb_grpc.DataServiceStub(c).ReadBlock(
                 pb.ReadBlockRequest(block_id=block_id, access_token=lectura))])
@@ -214,19 +213,15 @@ async def main() -> int:
         if not igual:
             fallas.append(f"la copia de {nodo} no coincide")
 
-    async with canal(lider) as c:                                      # los avisos llegan al líder
-        await asyncio.sleep(0.5)
-        nodos = await pb_grpc.AdminServiceStub(c).ListNodes(empty_pb2.Empty(), metadata=token_admin)
-    con_bloque = sorted(n.name.split(".")[0] for n in nodos.nodes if n.block_count)
-    print(f"El líder sabe que el bloque está en: {con_bloque}")
-    if con_bloque != ["dn1", "dn2", "dn3"]:
-        fallas.append("el líder no recibió los avisos BlockReceived")
-
-    async with canal("dn4") as c:
+    print(f"El líder ubica el bloque en: {con_copia}")
+    if len(con_copia) != 3:
+        fallas.append("el líder no recibió los avisos BlockReceived de las 3 copias")
+    fuera = ({"dn1", "dn2", "dn3", "dn4"} - set(con_copia)).pop()
+    async with canal(fuera) as c:
         salud = await pb_grpc.DataServiceStub(c).CheckBlockHealth(pb.HealthCheckRequest(block_ids=[block_id]))
-    print(f"dn4, que no estaba en la cadena, tiene el bloque: {salud.blocks[0].present}")
+    print(f"{fuera}, que no estaba en la cadena, tiene el bloque: {salud.blocks[0].present}")
     if salud.blocks[0].present:
-        fallas.append("dn4 no debía tener el bloque")
+        fallas.append(f"{fuera} no debía tener el bloque")
 
     for interno in (50054, 50053, 2379):
         abierto = puerto_abierto(interno)

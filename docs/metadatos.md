@@ -2,7 +2,7 @@
 
 Los tres nodos de metadatos forman el plano de control (D1). Cada uno corre junto a un miembro de etcd, compite en la elección de líder y atiende MetadataService y AdminService en el puerto 50051 con TLS. Solo el líder atiende las peticiones y escribe en etcd. Los otros dos remiten al cliente al líder.
 
-Esta parte cubre la elección del líder, los usuarios, el inicio de sesión, la sesión con su lease, las claves del clúster, la administración de usuarios y la auditoría. Las operaciones de archivos (List, Open, Lock, Commit y las demás) responden UNIMPLEMENTED hasta que se implementen.
+Esta parte cubre la elección del líder, los usuarios, el inicio de sesión, la sesión con su lease, las claves del clúster, la administración de usuarios y la auditoría. Las operaciones de archivos (RF1 y RF3) están en `dfsha/metadata/archivos.py` y siguen el esquema de [docs/etcd-esquema.md](etcd-esquema.md).
 
 ## Módulos
 
