@@ -151,7 +151,7 @@ message OpenResponse {
   uint64 block_size = 5;
   string file_checksum = 6;
   bytes file_key = 7;                // clave del archivo (DEK), solo al dueño y por TLS
-  uint32 read_lease_s = 8;           // 60
+  uint32 read_lease_s = 8;           // 30 s, porque el arriendo de lectura cuelga de la sesión (D4)
   repeated BlockLocation blocks = 9;
   repeated LockGrant locks = 10;     // en modo WRITE trae el lock del archivo entero
 }

@@ -30,7 +30,7 @@ Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada 
 | Mkdir, Rmdir | Crean o borran un directorio | EXISTS, DIR_NOT_EMPTY, NOT_FOUND, FORBIDDEN |
 | Remove | Borra un archivo con el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
 | Rename | Mueve o renombra en una sola operación atómica | NOT_FOUND, EXISTS, FORBIDDEN |
-| Open | Abre un archivo y devuelve el descriptor, la versión vista, la clave del archivo, el arriendo de lectura y la ubicación de los bloques. En modo escritura incluye el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
+| Open | Abre un archivo y devuelve el descriptor, la versión vista, la clave del archivo, el arriendo de lectura (dura lo mismo que la sesión, 30 s, y se renueva con Renew) y la ubicación de los bloques. En modo escritura incluye el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
 | GetBlockLocations | Refresca las réplicas y los tokens de un rango de bloques | NOT_FOUND |
 | AllocateBlocks | Asigna ids nuevos y una cadena de 3 nodos de datos a hasta 8 bloques | QUOTA_EXCEEDED, NO_SPACE |
 | Lock, Unlock | Toman o liberan locks de bloques, del final del archivo o del archivo entero, con espera en cola de hasta 10 s | LOCKED |
@@ -105,7 +105,7 @@ Ana abre su video para leerlo (formato de texto de Protocol Buffers).
 ```
 Open  > path: "/ana/videos/viaje.mp4"  mode: OPEN_MODE_READ  session_id: "694da1b87d62da07"
 Open  < fd: "fd-812"  file_id: "f-3a91c0de55b2e017"  version: 1  size: 1073741824
-        block_size: 16777216  file_checksum: "9f2c..."  file_key: <32 bytes>  read_lease_s: 60
+        block_size: 16777216  file_checksum: "9f2c..."  file_key: <32 bytes>  read_lease_s: 30
         blocks { index: 0  block_id: "b-7f31a0c4e2d95b16"  cipher_checksum: "a1..."  plain_checksum: "c4..."
                  size: 16777216  replicas: "dn1.dfsha.internal:50052"  replicas: "dn2.dfsha.internal:50052"
                  replicas: "dn3.dfsha.internal:50052"  access_token: <token> }
