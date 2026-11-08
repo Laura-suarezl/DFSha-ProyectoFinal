@@ -1,0 +1,13 @@
+# Al construir la imagen solo entra lo necesario para ejecutar DFSha.
+# Nunca entran llaves, certificados, código generado en el equipo ni cachés.
+*
+!pyproject.toml
+!README.md
+!proto
+!scripts
+!dfsha
+dfsha/_gen
+**/__pycache__
+**/*.key
+**/*.crt
+**/*.pem

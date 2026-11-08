@@ -35,6 +35,10 @@ Las decisiones, con sus alternativas y su justificación, están en [docs/decisi
 
 Python 3.12, gRPC (grpcio), etcd 3.5, cryptography, argon2-cffi, PyJWT, boto3, typer, pytest, Docker y Docker Compose, AWS CLI. Detalle y justificación en [docs/decisiones.md](docs/decisiones.md).
 
+## Entorno local con Docker
+
+Para probar los servicios juntos en un solo computador hay un Compose de desarrollo con etcd y los nodos de datos, con TLS y los mismos nombres que en AWS. Cómo levantarlo y su prueba de humo están en [deploy/compose/README.md](deploy/compose/README.md).
+
 ## Instalación para desarrollo
 
 ```

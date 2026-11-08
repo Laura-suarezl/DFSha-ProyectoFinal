@@ -16,7 +16,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 | 6 | Detección de fallos y recuperación | Latidos a los 3 nodos de metadatos (3 s, 10/30 s), órdenes en la respuesta, re-replicación, inventario, scrubbing, GC, Decommission. CheckBlockHealth como diagnóstico | L + T (diagnóstico) | Decidido |
 | 7 | Descubrimiento y transparencia | Nombre lógico en zona privada de Route 53, NOT_LEADER con el nombre del líder, nodos devueltos por nombre | L | Decidido |
 | 8 | Seguridad | Auth en los nodos de metadatos (Argon2id, JWT Ed25519), token por bloque HMAC, TLS 1.3 y mTLS por nombre, cifrado por el cliente y EBS, límite de concurrencia, auditoría | L + T (DoS, auditoría) | Decidido |
-| 9 | Contrato de la API y errores | 4 servicios gRPC con una operación por acción y CheckBlockHealth, ChunkPayload de T con token, puertos 50051/50052, errores de L con LOCKED como ABORTED | L + T (mensaje, puertos, código) | Decidido |
+| 9 | Contrato de la API y errores | 4 servicios gRPC con una operación por acción y CheckBlockHealth, ChunkPayload de T con token, puertos 50051/50052 para clientes y 50053/50054 internos, errores de L con LOCKED como ABORTED | L + T (mensaje, puertos, código) | Decidido |
 | 10 | Despliegue en AWS | 3 zonas y subred pública, 9 EC2 (3 metadatos, 4 datos, 2 clientes), tamaños t3, EBS gp3 cifrado, NAT Gateway temporal, Docker Compose por máquina, script con AWS CLI | L + T (tamaños) | Decidido |
 | 11 | Pruebas y métricas | Unión de E1 a E11 (L) y las pruebas de T, más E0 de acceso RF3, trozo 64 KB frente a 1 MB y desconexión por firewall | L + T + nueva | Decidido |
 | 12 | Documentación | C4 de contexto (T), un diagrama de componentes en notación C4, despliegue, casos de uso y secuencias de L actualizados, STRIDE con amenazas de ambos, fuentes de diagramas en el repositorio | L + T (C4, STRIDE) | Decidido |
@@ -28,7 +28,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 **Por qué.** Es la única opción que no simplifica RNF2. Un Master único (T) es un punto único de falla y es una simplificación que habría que declarar y hacer aprobar. Las opciones de respaldo con conmutación manual o con disco compartido siguen teniendo un punto único de falla. etcd es una implementación probada de Raft que se usa como componente.
 
 **Ajustes de contrato que impone etcd**:
-- Máximo 128 operaciones por transacción (--max-txn-ops). La lista de bloques de una versión va en una sola clave (manifiesto), no una clave por bloque.
+- Máximo 128 operaciones por lista en una transacción (--max-txn-ops, el límite se aplica por separado a comparaciones y a escrituras, comprobado). La lista de bloques de una versión va en una sola clave (manifiesto), no una clave por bloque.
 - Máximo 1,5 MiB por petición (--max-request-bytes). Se declara como límite del tamaño del manifiesto.
 - Cuota de 2 GB de la base de datos por defecto. Se declara.
 - La revisión global de etcd solo crece y sirve como token de cerco para los locks.
@@ -71,7 +71,8 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 
 **Decisión.**
 - **Granularidad.** Lock exclusivo por bloque para escribir. Anexar bloquea el "final" del archivo. Reemplazar y borrar bloquean el archivo entero. Quien necesita varios bloques los pide en orden ascendente de índice (sin interbloqueos). Los lectores no bloquean, porque leen su instantánea.
-- **Espera.** Cola en orden de llegada hasta 10 s, implementada con la receta de mutex de etcd (los que esperan se ordenan por la revisión con que crearon su clave). Si se supera la espera, el error es LOCKED con el dueño y el vencimiento.
+- **Espera.** Cola en orden de llegada hasta 10 s, con la API Lock de etcd, que aplica del lado del servidor la receta de mutex (los que esperan se ordenan por la revisión con que crearon su clave). Si se supera la espera, el error es LOCKED con el dueño y el vencimiento. Un corte antes de agotar la espera es la caída de un miembro de etcd y se reintenta con la misma entrada de la cola.
+- **Jerarquía.** El lock del archivo entero excluye a los de bloque y al del final del archivo, con claves de intención atadas a la sesión (ver docs/etcd-esquema.md).
 - **Token de cerco.** Es la revisión de creación de la clave del lock en etcd, que solo crece. El commit comprueba dentro de su transacción que esa clave sigue existiendo con esa revisión. Si el lease venció, la clave ya no existe y el commit falla con LEASE_EXPIRED.
 - **Renovación por sesión.** Cada sesión de cliente es un lease de etcd de 30 s, y todos sus locks y arriendos cuelgan de él. Renew(sesión), cada 10 s, es el keep-alive de ese lease.
 
@@ -140,7 +141,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 **Decisión.**
 - **Autenticación.** Vive en los nodos de metadatos. Usuarios y hash Argon2id guardados en etcd. El líder emite un JWT de una hora firmado con Ed25519 (firma asimétrica), más un token de renovación. Cada llamada lleva el JWT en sus cabeceras.
 - **Autorización.** Cada usuario tiene su espacio /usuario y cada entrada guarda su dueño. El líder comprueba en cada operación que la ruta normalizada esté dentro del espacio del usuario. Hay un rol administrador sin acceso a contenidos y cuotas por usuario. Los nodos de datos exigen un token de acceso por bloque firmado con HMAC (ids, operación, usuario, vencimiento de 10 min).
-- **Tránsito.** TLS 1.3 entre cliente y servidores y TLS mutuo entre servidores (también entre miembros de etcd), con una CA interna que emite certificados por nombre (D7).
+- **Tránsito.** TLS 1.3 entre cliente y servidores y TLS mutuo entre servidores (también entre miembros de etcd), con una CA interna que emite certificados por nombre (D7). El tráfico entre servidores va por puertos internos que exigen certificado (D9 y docs/tls.md).
 - **Reposo.** El cliente cifra cada bloque con AES-256-GCM (clave por archivo custodiada por los metadatos y envuelta con una clave maestra, nonce nuevo por bloque, AAD con archivo e índice), más volúmenes EBS cifrados.
 - **Denegación de servicio (de T).** Límite de peticiones simultáneas en cada servidor y rechazo controlado con RESOURCE_EXHAUSTED.
 - **Auditoría (fusión).** Registro de inicios de sesión, accesos denegados y borrados (L) con fecha, IP, usuario y operación (T).
@@ -161,7 +162,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 - **Protocolo.** gRPC con TLS en todos los canales (ambos diseños).
 - **Servicios.** MetadataService (sesión, directorios, Open, GetBlockLocations, AllocateBlocks, Lock, Unlock, Renew, Commit, Close, ReportBadBlock), AdminService (usuarios, cuotas, estado de nodos, Decommission), DataService (WriteBlock y ReadBlock por streaming, más CheckBlockHealth de diagnóstico) y NodeService (Register, Heartbeat, BlockReceived, BlockDeleted, BlockReport), atendido por los tres nodos de metadatos. Una operación por acción.
 - **Mensaje de trozos.** ChunkPayload de T (block_id, sequence_number, data, is_last_chunk, block_checksum, downstream_nodes), con el token de acceso por bloque agregado (D8). Tamaño del trozo configurable (D5).
-- **Puertos.** Plano de control y administración en 50051, nodos de datos en 50052, etcd en 2379 (clientes) y 2380 (pares).
+- **Puertos.** Para clientes, plano de control y administración en 50051 y nodos de datos en 50052, con TLS. Entre servidores, NodeService en 50053 y la cadena y las copias entre nodos de datos en 50054, con TLS mutuo obligatorio. etcd en 2379 (clientes) y 2380 (pares). La cadena de AllocateBlocks trae el primer nodo con 50052 y los siguientes con 50054.
 - **Errores.** Tabla de L. LOCKED pasa de DEADLINE_EXCEEDED a ABORTED, junto con VERSION_CONFLICT y LEASE_EXPIRED, porque DEADLINE_EXCEEDED también lo genera gRPC cuando vence el plazo del propio cliente y no se podrían distinguir.
 - **Reintentos.** Solo operaciones idempotentes o con op_id, con espera exponencial hasta 5 s.
 
@@ -169,7 +170,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 
 **De T se conserva.** ChunkPayload, puertos, CheckBlockHealth y el uso de ABORTED para el lock ocupado.
 
-**Compatibilidad con los puntos 10 y 11.** No descarta nada. Los grupos de seguridad se abren en 50051, 50052, 2379 y 2380. CheckBlockHealth queda disponible como evidencia en las pruebas.
+**Compatibilidad con los puntos 10 y 11.** No descarta nada. Los grupos de seguridad se abren en 50051, 50052, 50053, 50054, 2379 y 2380. CheckBlockHealth queda disponible como evidencia en las pruebas.
 
 ## D10. Despliegue en AWS Academy
 
@@ -180,7 +181,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 - **Salida a Internet para instalar.** NAT Gateway temporal en la subred pública, creado para instalar y borrado después, porque se cobra por hora y por datos procesados. Opcional: una AMI base con Docker y las imágenes ya instaladas, para que las instancias nuevas arranquen sin volver a crear el NAT.
 - **Ejecución.** Docker Compose en cada máquina, un archivo por rol, lanzados con un script de despliegue por SSH a través del bastión. Un docker-compose local con todo en un PC sirve solo para desarrollar.
 - **Infraestructura.** Script con AWS CLI y pasos manuales documentados como respaldo. Las IP privadas se conservan al detener e iniciar las instancias, así que los registros de Route 53 siguen siendo válidos.
-- **Grupos de seguridad.** 50051 solo desde clientes y nodos de datos, 2379 y 2380 solo entre nodos de metadatos, 50052 solo desde clientes y otros nodos de datos, SSH solo al bastión desde la IP del administrador.
+- **Grupos de seguridad.** 50051 y 50052 solo desde los clientes, 50053 solo desde los nodos de datos, 50054 solo entre nodos de datos, 2379 y 2380 solo entre nodos de metadatos, y SSH solo al bastión desde la IP del administrador. Los clientes no llegan a ningún puerto interno.
 
 **Por qué.** Una sola subred en una zona (T) simplifica RNF2 a nivel de zona y es incompatible con la regla de ubicación de D5. Juntar roles en una máquina ya no hace falta con 9 EC2. Docker Swarm agrega una red y un DNS propios encima de Route 53 y de los certificados por nombre (D7).
 
@@ -217,7 +218,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 ## D12. Documentación
 
 **Decisión.**
-- **Vistas.** Contexto en C4 nivel 1 (T), actualizado sin servicio Auth externo. Un único diagrama de componentes con las conexiones A a F de L en notación C4 nivel 2, actualizado con etcd y los puertos 50051 y 50052. Despliegue de L actualizado con D10. Casos de uso y secuencias S0 a S6 y escenarios 1 y 3 de L, actualizados con D3, D4 y D9.
+- **Vistas.** Contexto en C4 nivel 1 (T), actualizado sin servicio Auth externo. Un único diagrama de componentes con las conexiones A a F de L en notación C4 nivel 2, actualizado con etcd y los puertos 50051, 50052, 50053 y 50054. Despliegue de L actualizado con D10. Casos de uso y secuencias S0 a S6 y escenarios 1 y 3 de L, actualizados con D3, D4 y D9.
 - **Amenazas.** Una sola tabla STRIDE con las amenazas de ambos diseños y las mitigaciones de D8.
 - **Fuentes.** El código fuente de todos los diagramas (scripts de L y fuentes de los C4 de T) va en docs/diagramas/ del repositorio.
 - **Informe.** Matriz comparativa breve, arquitectura acordada, cambios frente a cada diseño individual (columna "Origen" de este registro), APIs y algoritmos, despliegue, pruebas con la tabla de D11, resultados, limitaciones y tabla de contribuciones. El Word sigue las reglas de estilo de Laura y el README va en Markdown.
@@ -238,7 +239,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 
 **Simplificaciones que requieren aprobación del profesor.** Ninguna. Se evitaron el Master único (RNF2) y el write() sin modificación parcial (RF3), y el cifrado de disco no se considera simplificación.
 
-**Límites a declarar.** Los de etcd (128 operaciones por transacción, 1,5 MiB por petición y 2 GB de cuota por defecto) y los de los diseños de origen (lectura de archivos menores de 16 MB desde un solo nodo, entre otros).
+**Límites a declarar.** Los de etcd (128 operaciones por lista en una transacción, que permiten modificar hasta 125 bloques por commit, 1,5 MiB por petición y 2 GB de cuota por defecto) y los de los diseños de origen (lectura de archivos menores de 16 MB desde un solo nodo, entre otros).
 
 **Verificado en el laboratorio.** NAT Gateway, creación de AMI, tipos de instancia y KMS (ver D8 y D10). KMS también funciona desde una EC2 con LabInstanceProfile (comprobado el 2026-11-07). No queda nada pendiente de verificar.
 
@@ -259,3 +260,21 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 **Por qué.** Python es el lenguaje del laboratorio de gRPC del curso, así que ambos pueden explicar todo el código. Su punto débil, un cliente de etcd sin mantenimiento (python-etcd3), se evita generando el cliente desde los .proto oficiales de etcd, que además ofrecen Lock (cola por revisión y token de cerco) y Election del lado del servidor. Go era técnicamente mejor por su cliente oficial de etcd, pero no es el lenguaje del curso. Java pesa en una t3.micro, Node no aporta ventaja y mezclar lenguajes complica la defensa. REST con FastAPI no se usa porque D9 eligió gRPC por el streaming y el contrato.
 
 **Comprobado con etcd v3.5.35.** Los .proto de etcd compilan para Python una vez quitadas las anotaciones de gogoproto y google.api, que no cambian el formato de los mensajes (ver docs/etcd-esquema.md). Contra un etcd real funcionan las transacciones con comparación de revisión, los leases con keep-alive, Lock con su token de cerco, el rechazo del commit cuando vence la sesión y Election. Al cancelar la espera de un Lock, la entrada del que esperaba desaparece sola de la cola.
+
+## Ajustes durante la implementación (etapas 3 a 5)
+
+Al implementar y probar las decisiones aparecieron ajustes. Ninguno simplifica un requisito, y varios lo refuerzan. La evidencia de cada uno está en los prototipos y en las pruebas del repositorio.
+
+| # | Decisión | Qué cambió | Por qué | Evidencia |
+|---|---|---|---|---|
+| A1 | D1 | El límite de 128 operaciones de etcd es por lista, así que un commit admite hasta 125 bloques con lock propio | Medido contra un etcd real | prototipos/etcd-cluster, escenario 6 |
+| A2 | D1 | Cada llamada a etcd tiene un plazo total de 5 s, reintentos incluidos | Sin mayoría, una escritura tardaba 44 s en fallar, más que la sesión de 30 s. Ahora el lado sin mayoría recibe NO_QUORUM en 5 s | prototipos/etcd-cluster, escenario 3b |
+| A3 | D3 | Toda escritura del líder incluye una comparación de liderazgo | Un líder que perdió el liderazgo sin saberlo no debe poder escribir | prototipos/etcd-cluster, escenario 2 |
+| A4 | D3 | Los bloques en construcción se agrupan por archivo y descriptor, y el commit los borra con una sola operación | Borrarlos uno por uno superaba el límite de operaciones en archivos grandes | docs/etcd-esquema.md |
+| A5 | D4 | La cola usa la API Lock de etcd, la jerarquía de locks usa claves de intención, y un corte antes de agotar la espera se trata como caída de un miembro | Esperar con Watch sin más tenía una carrera, y etcd usa el mismo código para la espera agotada y para la caída del miembro conectado | prototipos/etcd-cluster, escenarios 3 y 4 |
+| A6 | D5 | Un nodo caído no arrastra al anterior, el plazo de espera crece con la longitud de la cadena y la confirmación decide el destino del temporal | En la primera versión, la caída del último nodo dejaba 1 copia en vez de 2 | prototipos/cadena-datanodes, escenarios 3 y 4, y tests/test_datanode.py |
+| A7 | D8, D9 y D10 | El tráfico entre servidores va por los puertos internos 50053 y 50054, con TLS mutuo obligatorio, y los grupos de seguridad los cierran a los clientes | gRPC para Python no permite pedir el certificado del cliente de forma opcional en un mismo puerto, y sin puertos propios no se cumplía el TLS mutuo entre servidores | tests/test_tls.py y prototipos/cadena-datanodes, escenario 6 |
+| A8 | D9 | El arriendo de lectura dura 30 s y no 60 | Cuelga de la sesión, como dice D4 | proto/dfsha.proto |
+| A9 | D9 | Se agrega el motivo de error OVERLOADED, y el campo delete de las órdenes a los nodos pasa a llamarse remove | Faltaba un motivo para el límite de peticiones de D8, y delete es palabra reservada en otros lenguajes | proto/dfsha.proto |
+
+**Confirmado sin cambios.** El trozo de 1 MiB rindió más que el de 64 KiB, con y sin TLS (D5). La sesión, los locks y el commit sobreviven a la caída de cualquier miembro de etcd, y un nuevo líder de metadatos asume en unos 3 s (D1 y D4). Los bloques a medias nunca se publican y se borran al reiniciar el nodo (D5 y escenario 3 del enunciado).

@@ -368,7 +368,9 @@ async def main() -> int:
         await escenario_5(cli)
         await escenario_6(cli)
         await cli.borrar_prefijo(P)
-    (AQUI / "resultados.json").write_text(json.dumps(resultados, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Finales de línea de Linux en cualquier sistema, igual que en el repositorio (.gitattributes)
+    (AQUI / "resultados.json").write_text(json.dumps(resultados, ensure_ascii=False, indent=2) + "\n",
+                                          encoding="utf-8", newline="\n")
     return 0
 
 
