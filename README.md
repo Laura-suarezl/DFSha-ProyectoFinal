@@ -1,0 +1,44 @@
+# DFSha
+
+Sistema de archivos distribuido de alta disponibilidad, rendimiento y seguridad. Proyecto 1 de Sistemas Distribuidos (Arquitectura de nube y sistemas distribuidos), Universidad Pontificia Bolivariana, 2026-2, con el docente Álvaro Ospina Sanjuan.
+
+**Equipo:** Laura Carolina Suárez Lozano y Tomás Castaño Peña.
+
+**Arquitectura asignada:** opción 1, cliente/servidor con servicio distribuido entre servidores (S2S) dentro de una red privada (VPC de AWS Academy).
+
+
+## Resumen de la arquitectura
+
+- **Plano de control.** Tres nodos de metadatos con un líder elegido por consenso (Raft, a través de etcd). Guardan el árbol de directorios, las versiones de cada archivo, los locks y la ubicación de los bloques.
+- **Plano de datos.** Cuatro nodos de datos que guardan los archivos partidos en bloques de 16 MB, con tres réplicas por bloque copiadas en cadena entre servidores.
+- **Cliente.** CLI y biblioteca con las operaciones de RF1 a RF3. Cifra cada bloque antes de enviarlo y transfiere los bloques directamente con los nodos de datos.
+
+Las decisiones, con sus alternativas y su justificación, están en [docs/decisiones.md](docs/decisiones.md).
+
+## Estructura del repositorio
+
+| Carpeta | Contenido |
+|---|---|
+| `proto/` | Contratos gRPC de DFSha y los .proto de etcd |
+| `dfsha/common/` | Configuración, TLS, cifrado, errores y código generado |
+| `dfsha/metadata/` | Nodos de metadatos |
+| `dfsha/datanode/` | Nodos de datos |
+| `dfsha/client/` | Biblioteca y CLI del cliente |
+| `deploy/` | Dockerfiles, Compose, CA interna y scripts de AWS |
+| `tests/` | Pruebas unitarias y de integración |
+| `experiments/` | Experimentos E0 a E11 y sus resultados |
+| `docs/` | Decisiones, plan, arquitectura, API y diagramas |
+
+## Stack
+
+Python 3.12, gRPC (grpcio), etcd 3.5, cryptography, argon2-cffi, PyJWT, boto3, typer, pytest, Docker y Docker Compose, AWS CLI. Detalle y justificación en [docs/decisiones.md](docs/decisiones.md).
+
+## Instalación para desarrollo
+
+```
+python -m venv .venv
+.venv\Scripts\activate          # en Linux o macOS: source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+**Nota:** si el repositorio está dentro de una carpeta sincronizada (OneDrive, Dropbox, Google Drive), crea el entorno virtual fuera de ella, por ejemplo en `~/.venvs/dfsha`. La sincronización bloquea los archivos del entorno y la instalación falla.

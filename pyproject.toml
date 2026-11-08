@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dfsha"
+version = "0.1.0"
+description = "DFSha: sistema de archivos distribuido de alta disponibilidad (Proyecto 1, Sistemas Distribuidos, UPB 2026-2)"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    { name = "Laura Carolina Suárez Lozano" },
+    { name = "Tomás Castaño Peña" },
+]
+# Stack confirmado en docs/decisiones.md (sección Stack)
+dependencies = [
+    "grpcio>=1.66",          # RPC y streaming (D9)
+    "protobuf>=5.27",        # mensajes generados desde proto/
+    "cryptography>=43",      # AES-GCM, Ed25519, HMAC y CA interna (D8)
+    "argon2-cffi>=23.1",     # hash de contraseñas (D8)
+    "PyJWT[crypto]>=2.9",    # JWT firmado con Ed25519 (D8)
+    "boto3>=1.35",           # KMS con el rol de la instancia (D8)
+    "typer>=0.12",           # CLI del cliente (RF1, RF2)
+]
+
+[project.optional-dependencies]
+dev = [
+    "grpcio-tools>=1.66",    # generación de código desde los .proto
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.setuptools.packages.find]
+include = ["dfsha*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
