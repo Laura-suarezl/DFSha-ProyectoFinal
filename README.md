@@ -16,11 +16,14 @@ Sistema de archivos distribuido de alta disponibilidad, rendimiento y seguridad.
 | Documento | Contenido |
 |---|---|
 | [docs/arquitectura.md](docs/arquitectura.md) | Contexto, componentes, despliegue y flujo de una escritura |
+| [docs/diagramas/](docs/diagramas/) | Casos de uso, secuencias S0 a S6 y escenarios 1 y 3 |
 | [docs/semantica.md](docs/semantica.md) | Qué admite write(), semántica de lock() y garantías comprobables |
 | [docs/decisiones.md](docs/decisiones.md) | Registro de decisiones del equipo y cambios frente a los diseños individuales |
 | [docs/api.md](docs/api.md) | Servicios gRPC, operaciones y errores |
 | [docs/etcd-esquema.md](docs/etcd-esquema.md) | Claves en etcd, transacciones y locks |
 | [docs/metadatos.md](docs/metadatos.md), [docs/nodos.md](docs/nodos.md), [docs/cliente.md](docs/cliente.md) | Funcionamiento de cada componente |
+| [docs/seguridad.md](docs/seguridad.md) | Mecanismos de seguridad y tabla STRIDE |
+| [docs/pruebas.md](docs/pruebas.md) | Pruebas automáticas, escenarios locales y experimentos en AWS |
 | [docs/tls.md](docs/tls.md), [docs/configuracion.md](docs/configuracion.md) | CA interna, puertos y parámetros |
 | [experimentos/resultados/resumen.md](experimentos/resultados/resumen.md) | Resultados de las pruebas en AWS |
 
