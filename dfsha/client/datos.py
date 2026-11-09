@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import os
 import secrets
+from pathlib import Path
 
 import grpc
 from cryptography.exceptions import InvalidTag
@@ -22,7 +23,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
-from dfsha.common.config import Configuracion
+from dfsha.common.config import OPCIONES_CANAL, Configuracion
 from dfsha.common.errores import detalle_de, motivo_de
 
 
@@ -64,8 +65,8 @@ class Transferencia:
     def _stub(self, destino: str) -> pb_grpc.DataServiceStub:
         real = self.direcciones.get(destino, destino)
         if real not in self._canales:
-            self._canales[real] = (grpc.aio.secure_channel(real, self.credenciales) if self.credenciales
-                                   else grpc.aio.insecure_channel(real))
+            self._canales[real] = (grpc.aio.secure_channel(real, self.credenciales, options=OPCIONES_CANAL)
+                                   if self.credenciales else grpc.aio.insecure_channel(real, options=OPCIONES_CANAL))
         return pb_grpc.DataServiceStub(self._canales[real])
 
     async def cerrar(self) -> None:
@@ -120,34 +121,48 @@ async def _con_limite(n: int, corrutinas):
 
 
 async def subir(cfg: Configuracion, meta: pb_grpc.MetadataServiceStub, token, sesion: str, ruta: str,
-                datos: bytes, transferencia: Transferencia) -> pb.CommitResponse:
-    """Crea o reemplaza un archivo completo (put): Open en modo escritura, bloques en paralelo y Commit."""
+                datos: bytes | Path, transferencia: Transferencia) -> pb.CommitResponse:
+    """Crea o reemplaza un archivo completo (put): Open en modo escritura, bloques en paralelo y Commit.
+
+    datos puede ser una ruta local: entonces cada bloque se lee del disco cuando se envía, así un
+    archivo de varios GB no tiene que caber en memoria.
+    """
     abierto = await meta.Open(pb.OpenRequest(path=ruta, mode=pb.OPEN_MODE_WRITE, session_id=sesion), metadata=token)
     try:
         tam, w = abierto.block_size, cfg.almacenamiento.confirmaciones
-        partes = [datos[i:i + tam] for i in range(0, len(datos), tam)]
+        total = datos.stat().st_size if isinstance(datos, Path) else len(datos)
+
+        def parte(i: int) -> bytes:
+            if not isinstance(datos, Path):
+                return datos[i * tam:(i + 1) * tam]
+            with open(datos, "rb") as f:
+                f.seek(i * tam)
+                return f.read(tam)
+        cantidad = (total + tam - 1) // tam
         lock = abierto.locks[0].fencing_token
         confirmados: list[pb.CommittedBlock] = []
 
-        async def uno(indice: int, plano: bytes, asignado: pb.AllocatedBlock) -> pb.CommittedBlock:
+        async def uno(indice: int, asignado: pb.AllocatedBlock) -> pb.CommittedBlock:
+            plano = await asyncio.to_thread(parte, indice)
             cifrado = cifrar_bloque(abierto.file_key, abierto.file_id, indice, plano)
-            for _ in range(3):
+            for _ in range(5):
                 if len(await transferencia.escribir(asignado, cifrado)) >= w:
                     return pb.CommittedBlock(index=indice, new_block_id=asignado.block_id, cipher_checksum=sha256(cifrado),
                                              plain_checksum=sha256(plano), size=len(plano), fencing_token=lock)
+                await asyncio.sleep(0.5)          # que lleguen al líder los avisos de las copias que sí quedaron
                 asignado = (await meta.AllocateBlocks(pb.AllocateBlocksRequest(fd=abierto.fd, indices=[indice]),
                                                       metadata=token)).blocks[0]   # otra cadena
             raise ErrorDatos(f"el bloque {indice} no alcanzó {w} copias")
 
         lote = cfg.almacenamiento.bloques_por_asignacion
-        for i in range(0, len(partes), lote):
-            indices = list(range(i, min(i + lote, len(partes))))
+        for i in range(0, cantidad, lote):
+            indices = list(range(i, min(i + lote, cantidad)))
             asignados = (await meta.AllocateBlocks(pb.AllocateBlocksRequest(fd=abierto.fd, indices=indices),
                                                    metadata=token)).blocks
             confirmados += await _con_limite(cfg.almacenamiento.paralelismo,
-                                             [uno(a.index, partes[a.index], a) for a in asignados])
+                                             [uno(a.index, a) for a in asignados])
         pedido = pb.CommitRequest(fd=abierto.fd, op_id=secrets.token_hex(8), blocks=confirmados,
-                                  new_size=len(datos), replace_all=True)
+                                  new_size=total, replace_all=True)
         for _ in range(10):                       # los avisos BlockReceived llegan al líder en paralelo
             try:
                 return await meta.Commit(pedido, metadata=token)
@@ -161,17 +176,31 @@ async def subir(cfg: Configuracion, meta: pb_grpc.MetadataServiceStub, token, se
 
 
 async def bajar(cfg: Configuracion, meta: pb_grpc.MetadataServiceStub, token, sesion: str, ruta: str,
-                transferencia: Transferencia) -> bytes:
-    """Lee un archivo completo (get), verificando cada bloque y la huella del archivo."""
+                transferencia: Transferencia, destino: Path | None = None) -> bytes | None:
+    """Lee un archivo completo (get), verificando cada bloque y la huella del archivo.
+
+    Con destino, cada bloque se escribe en su lugar del archivo local y no se junta en memoria.
+    """
     abierto = await meta.Open(pb.OpenRequest(path=ruta, mode=pb.OPEN_MODE_READ, session_id=sesion), metadata=token)
     try:
         async def uno(b: pb.BlockLocation) -> bytes:
             plano = descifrar_bloque(abierto.file_key, abierto.file_id, b.index, await transferencia.leer(b))
             if sha256(plano) != b.plain_checksum:
                 raise ErrorDatos(f"el bloque {b.index} no coincide con su huella en claro")
-            return plano
+            if destino is None:
+                return plano
+
+            def escribir():
+                with open(destino, "r+b") as f:
+                    f.seek(b.index * abierto.block_size)
+                    f.write(plano)
+            await asyncio.to_thread(escribir)
+            return b""
 
         bloques = sorted(abierto.blocks, key=lambda b: b.index)
+        if destino is not None:
+            with open(destino, "wb") as f:
+                f.truncate(abierto.size)
         partes = await _con_limite(cfg.almacenamiento.paralelismo, [uno(b) for b in bloques])
         huella = sha256(b"".join(bytes.fromhex(b.plain_checksum) for b in bloques))
         if huella != abierto.file_checksum:
@@ -182,6 +211,6 @@ async def bajar(cfg: Configuracion, meta: pb_grpc.MetadataServiceStub, token, se
             except grpc.aio.AioRpcError:
                 pass
         transferencia.malas.clear()
-        return b"".join(partes)
+        return None if destino is not None else b"".join(partes)
     finally:
         await meta.Close(pb.CloseRequest(fd=abierto.fd), metadata=token)

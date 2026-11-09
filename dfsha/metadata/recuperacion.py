@@ -24,6 +24,7 @@ from dfsha.metadata.etcd import EtcdNoDisponible
 
 log = logging.getLogger(__name__)
 UNA_HORA_MS = 3600 * 1000
+COPIAS_POR_NODO_Y_CICLO = 8     # no inundar a un nodo con órdenes de copia (memoria y red)
 
 
 class Recuperacion:
@@ -97,6 +98,7 @@ class Recuperacion:
 
         # 1 y 4: re-replicación, contando las copias en nodos no muertos que no se están retirando
         r = cfg.almacenamiento.replicas
+        ordenadas: dict[str, int] = {}
         for bloque, huella in referenciados.items():
             todas = registro.ubicaciones(bloque, huella)
             buenas = [n for n in todas if registro.estado(n) not in (pb.NODE_STATE_DEAD, pb.NODE_STATE_DECOMMISSIONING)]
@@ -107,8 +109,11 @@ class Recuperacion:
                 resumen["perdidos"] += 1
                 log.error("bloque %s sin ninguna copia disponible", bloque)
                 continue
+            if ordenadas.get(origen, 0) >= COPIAS_POR_NODO_Y_CICLO:
+                continue                              # el siguiente ciclo sigue con el resto
             destinos = registro.elegir_cadena(r - len(buenas), excluir=set(todas))
             if destinos:
+                ordenadas[origen] = ordenadas.get(origen, 0) + 1
                 registro.encolar(origen, pb.NodeCommand(replicate=pb.ReplicateCommand(
                     block_id=bloque, block_checksum=huella, targets=destinos)))
                 self._pendientes[bloque] = ahora + 60

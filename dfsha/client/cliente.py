@@ -21,7 +21,7 @@ from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
 from dfsha.client.datos import (ErrorDatos, Transferencia, bajar, cifrar_bloque, descifrar_bloque, sha256,
                                 subir)
-from dfsha.common.config import Configuracion
+from dfsha.common.config import OPCIONES_CANAL, Configuracion
 from dfsha.common.errores import detalle_de, motivo_de
 
 MODOS = {"r": pb.OPEN_MODE_READ, "w": pb.OPEN_MODE_WRITE, "a": pb.OPEN_MODE_APPEND, "rw": pb.OPEN_MODE_READ_WRITE}
@@ -54,7 +54,7 @@ class Cliente:
     def _canal(self, destino: str) -> grpc.aio.Channel:
         real = self.direcciones.get(destino, destino)
         if real not in self._canales:
-            opciones = [("grpc.lb_policy_name", "round_robin")]
+            opciones = [("grpc.lb_policy_name", "round_robin"), *OPCIONES_CANAL]
             if destino == self.destino_cluster:       # el certificado de cada nodo lleva el nombre lógico
                 opciones.append(("grpc.ssl_target_name_override", self.cfg.cluster.nombre))
             self._canales[real] = (grpc.aio.secure_channel(real, self.credenciales, options=opciones)
@@ -180,13 +180,15 @@ class Cliente:
                 self._lider = None
                 await asyncio.sleep(1)
 
-    async def put(self, datos: bytes, ruta: str) -> pb.CommitResponse:
+    async def put(self, datos, ruta: str) -> pb.CommitResponse:
+        """datos son bytes o una ruta local (Path), que se lee por bloques."""
         return await self._con_lider(lambda meta: subir(self.cfg, meta, self.cabecera(), self.sesion, self.ruta(ruta),
                                                         datos, self.transferencia))
 
-    async def get(self, ruta: str) -> bytes:
+    async def get(self, ruta: str, destino=None):
+        """Devuelve el contenido, o lo escribe en destino (Path) bloque por bloque."""
         return await self._con_lider(lambda meta: bajar(self.cfg, meta, self.cabecera(), self.sesion, self.ruta(ruta),
-                                                        self.transferencia))
+                                                        self.transferencia, destino))
 
     # ------------------------------------------------------------------ RF3
     async def open(self, ruta: str, modo: str = "r") -> "ArchivoAbierto":
@@ -320,12 +322,13 @@ class ArchivoAbierto:
     async def _escribir_bloque(self, a: pb.AllocatedBlock) -> pb.CommittedBlock:
         plano = bytes(self._sucios[a.index])
         cifrado = cifrar_bloque(self.clave, self.file_id, a.index, plano)
-        for _ in range(3):
+        for _ in range(5):
             if len(await self.c.transferencia.escribir(a, cifrado)) >= self.c.cfg.almacenamiento.confirmaciones:
                 base = self.bloques[a.index].block_id if a.index in self.bloques and self.modo != "w" else ""
                 return pb.CommittedBlock(index=a.index, new_block_id=a.block_id, base_block_id=base,
                                          cipher_checksum=sha256(cifrado), plain_checksum=sha256(plano),
                                          size=len(plano), fencing_token=self._token(a.index))
+            await asyncio.sleep(0.5)                   # que lleguen al líder los avisos de las copias que sí quedaron
             a = (await self.c.llamar("meta", "AllocateBlocks",
                                      pb.AllocateBlocksRequest(fd=self.fd, indices=[a.index]))).blocks[0]
         raise ErrorDatos(f"el bloque {a.index} no alcanzó las copias necesarias")

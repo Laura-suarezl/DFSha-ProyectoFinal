@@ -229,12 +229,13 @@ class ServicioMetadatos(pb_grpc.MetadataServiceServicer):
     # ---------------------------------------------------------------- RF3
     @atender()
     async def Open(self, request, context, identidad: Identidad):
-        return await self.nucleo.archivos.abrir(identidad.usuario, request.path, request.mode, request.session_id)
+        return await self.nucleo.archivos.abrir(identidad.usuario, request.path, request.mode, request.session_id,
+                                                ip_de(context.peer()))
 
     @atender()
     async def GetBlockLocations(self, request, context, identidad: Identidad):
         return await self.nucleo.archivos.ubicaciones(identidad.usuario, request.fd, request.first_index,
-                                                      request.last_index)
+                                                      request.last_index, ip_de(context.peer()))
 
     @atender()
     async def AllocateBlocks(self, request, context, identidad: Identidad):

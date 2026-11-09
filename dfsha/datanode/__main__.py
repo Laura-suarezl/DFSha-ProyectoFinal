@@ -44,7 +44,9 @@ async def servir(escucha: str, sin_metadatos: bool = False) -> None:
     almacen = Almacen(cfg.nodo.directorio_datos)
     borrados = almacen.limpiar_temporales()
     servicio = ServicioDatos(almacen, cfg.nodo.nombre, cfg.almacenamiento.tamano_trozo,
-                             credenciales_salida=salida, limite_peticiones=cfg.limites.peticiones_simultaneas)
+                             credenciales_salida=salida, limite_peticiones=cfg.limites.peticiones_simultaneas,
+                             gracia_cadena_s=cfg.tiempos.gracia_cadena_s,
+                             confirmaciones=cfg.almacenamiento.confirmaciones)
     metadatos = None
     if not sin_metadatos:
         metadatos = ClienteMetadatos(cfg, almacen, servicio, salida)

@@ -28,7 +28,7 @@ Las decisiones, con sus alternativas y su justificación, están en [docs/decisi
 | `prototipos/` | Prototipos de los riesgos técnicos, con sus resultados |
 | `deploy/` | Dockerfiles, Compose, CA interna (`deploy/certs/`) y scripts de AWS |
 | `tests/` | Pruebas unitarias y de integración |
-| `experiments/` | Experimentos E0 a E11 y sus resultados |
+| `experimentos/` | Experimentos en AWS, sus resultados y su análisis (`experimentos/resultados/resumen.md`) |
 | `docs/` | Decisiones, plan, arquitectura, API y diagramas |
 
 ## Stack

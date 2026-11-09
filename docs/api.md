@@ -29,7 +29,7 @@ Todos los canales usan TLS 1.3. Entre servidores el TLS es mutuo, así que cada 
 | Renew | Renueva la sesión y con ella todos sus locks y arriendos de lectura. Se llama cada 10 s | TOKEN_INVALID, LEASE_EXPIRED |
 | List, Stat | Listan un directorio o describen una entrada | NOT_FOUND, FORBIDDEN |
 | Mkdir, Rmdir | Crean o borran un directorio | EXISTS, DIR_NOT_EMPTY, NOT_FOUND, FORBIDDEN |
-| Remove | Borra un archivo con el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
+| Remove | Borra un archivo si nadie tiene locks sobre él. Los lectores con arriendo siguen leyendo la versión que abrieron y el recolector borra los bloques después | NOT_FOUND, LOCKED, FORBIDDEN |
 | Rename | Mueve o renombra en una sola operación atómica | NOT_FOUND, EXISTS, FORBIDDEN |
 | Open | Abre un archivo y devuelve el descriptor, la versión vista, la clave del archivo, el arriendo de lectura (dura lo mismo que la sesión, 30 s, y se renueva con Renew) y la ubicación de los bloques. En modo escritura incluye el lock del archivo entero | NOT_FOUND, LOCKED, FORBIDDEN |
 | GetBlockLocations | Refresca las réplicas y los tokens de un rango de bloques | NOT_FOUND |
@@ -57,7 +57,7 @@ Cualquier operación que llegue a un seguidor responde NOT_LEADER con el nombre 
 2. Los trozos siguientes solo llevan el número de secuencia y los datos, y el último marca `is_last_chunk`.
 3. Cada nodo escribe lo que recibe en un archivo temporal y reenvía cada trozo al siguiente nodo de la cadena mientras lo recibe. La cadena que entrega AllocateBlocks trae el primer nodo con su puerto de clientes (50052) y los siguientes con el puerto interno (50054), así que el reenvío entre nodos va siempre por TLS mutuo.
 4. Al terminar, cada nodo verifica la huella de su copia, la renombra a definitiva y avisa con BlockReceived a los 3 nodos de metadatos.
-5. La respuesta `WriteResult` vuelve por la cadena e indica qué nodos guardaron y verificaron su copia. El bloque cuenta como escrito con al menos 2.
+5. La respuesta `WriteResult` vuelve por la cadena e indica qué nodos guardaron y verificaron su copia. El bloque cuenta como escrito con al menos 2. Cada nodo espera la respuesta del siguiente solo un momento después de terminar su copia (`tiempos.gracia_cadena_s`, multiplicado por los nodos que quedan detrás). Si no llega, responde sin él y le sigue enviando en segundo plano, así una réplica lenta no frena la escritura. Si el cliente recibe menos de 2 copias, pide otra cadena con AllocateBlocks, que evita al nodo que falló.
 
 **ReadBlock (streaming del servidor).** Devuelve el bloque cifrado en trozos. El cliente verifica la huella cifrada, descifra y verifica la huella en claro.
 
@@ -82,7 +82,7 @@ Cada error usa un código de estado estándar de gRPC y, en los metadatos de cie
 | PERMISSION_DENIED | FORBIDDEN | Ruta fuera del espacio del usuario | Ninguno |
 | NOT_FOUND | NOT_FOUND | La ruta no existe | path |
 | ALREADY_EXISTS | EXISTS | Crear algo que ya existe | path |
-| FAILED_PRECONDITION | DIR_NOT_EMPTY | Borrar un directorio con contenido | entries |
+| FAILED_PRECONDITION | DIR_NOT_EMPTY | Borrar un directorio con contenido | path |
 | FAILED_PRECONDITION | NOT_LEADER | La petición llegó a un seguidor | leader |
 | ABORTED | VERSION_CONFLICT | La base de algún bloque modificado ya no es la vigente | block_index, current_block_id |
 | ABORTED | LEASE_EXPIRED | Commit con un lock que ya venció, o Renew de una sesión vencida | Ninguno |

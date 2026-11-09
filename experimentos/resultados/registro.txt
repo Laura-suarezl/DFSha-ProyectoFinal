@@ -1,0 +1,23 @@
+18:00:38 preparando máquinas y usuarios
+18:02:49 experimento e10
+18:03:33 experimento e1
+18:07:06 experimento e0
+18:07:55 experimento e2
+18:09:38 experimento trozo
+18:10:58 experimento e7
+18:12:04   distintos 4 escritores: {'marcas': 4, 'presentes': 4}
+18:12:19   distintos 8 escritores: {'marcas': 8, 'presentes': 8}
+18:12:37   distintos 16 escritores: {'marcas': 16, 'presentes': 16}
+18:12:54   mismo 4 escritores: {'marcas': 4, 'presentes': 4}
+18:13:23   mismo 8 escritores: {'marcas': 8, 'presentes': 8}
+18:14:47   mismo 16 escritores: {'marcas': 16, 'presentes': 16}
+18:14:47 experimento e11
+18:17:01 experimento e9
+18:25:01 experimento e4
+18:27:30 experimento escenario2
+18:29:45 experimento e8
+18:31:48 experimento kill9_lectura
+18:34:30 experimento e5
+18:38:55 experimento e6
+18:41:00 experimento e3
+18:44:56 terminado

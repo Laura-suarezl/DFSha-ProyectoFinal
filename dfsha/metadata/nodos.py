@@ -23,6 +23,7 @@ from dfsha.common.config import Tiempos
 from dfsha.common.errores import abortar
 from dfsha.common.tls import identidad_par
 from dfsha.common.tokens import id_de_clave
+from dfsha.metadata.auditoria import ip_de
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 class EstadoNodo:
     nombre: str
     zona: str = ""
+    ip: str = ""                        # dirección desde la que se registró (para ordenar por cercanía)
     capacidad: int = 0
     libre: int = 0
     usado: int = 0
@@ -49,9 +51,9 @@ class RegistroNodos:
         self.retirando: set[str] = set()
 
     # ------------------------------------------------------------ avisos de los nodos
-    def registrar(self, nombre: str, zona: str, capacidad: int, libre: int) -> None:
+    def registrar(self, nombre: str, zona: str, capacidad: int, libre: int, ip: str = "") -> None:
         n = self.nodos.setdefault(nombre, EstadoNodo(nombre))
-        n.zona, n.capacidad, n.libre = zona, capacidad, libre
+        n.zona, n.capacidad, n.libre, n.ip = zona, capacidad, libre, ip
         self._marcar(n)
 
     def latido(self, nombre: str, libre: int, usado: int, transferencias: int) -> bool:
@@ -99,9 +101,29 @@ class RegistroNodos:
                 if block_id in n.bloques and (huella is None or n.bloques[block_id][0] == huella)
                 and self.estado(n.nombre) != pb.NODE_STATE_DEAD]
 
-    def elegir_cadena(self, cantidad: int, excluir: set[str] = frozenset()) -> list[str]:
-        """Hasta `cantidad` nodos vivos, primero de zonas distintas y con más espacio libre (D5)."""
-        candidatos = sorted((n for n in self.vivos() if n.nombre not in excluir),
+    def ordenar(self, nombres: list[str], ip_cliente: str = "") -> list[str]:
+        """Réplicas para leer: vivos antes que sospechosos (D6), y entre ellos primero los de la misma
+        subred que el cliente (cercanía, D7) y los menos cargados."""
+        red = ip_cliente.rsplit(".", 1)[0] if ip_cliente.count(".") == 3 else None
+
+        def clave(nombre: str):
+            n = self.nodos.get(nombre)
+            if n is None:
+                return (2, 1, 0, nombre)
+            cerca = red is not None and n.ip.rsplit(".", 1)[0] == red
+            return (0 if self.estado(nombre) == pb.NODE_STATE_ALIVE else 1, 0 if cerca else 1, n.transferencias, nombre)
+        return sorted(nombres, key=clave)
+
+    def elegir_cadena(self, cantidad: int, excluir: set[str] = frozenset(), minimo: int = 1) -> list[str]:
+        """Hasta `cantidad` nodos vivos, primero de zonas distintas y con más espacio libre (D5).
+
+        Si hay menos de `minimo` nodos vivos se suman los sospechosos: un nodo sospechoso puede estar
+        solo atrasado con sus latidos por la carga, y no está muerto (D6).
+        """
+        disponibles = self.vivos()
+        if len([n for n in disponibles if n.nombre not in excluir]) < minimo:
+            disponibles = [n for n in self.nodos.values() if self.estado(n.nombre) == pb.NODE_STATE_SUSPECT] + disponibles
+        candidatos = sorted((n for n in disponibles if n.nombre not in excluir),
                             key=lambda n: (-n.libre, n.transferencias, n.nombre))
         elegidos, zonas = [], set()
         for n in candidatos:                       # una por zona primero
@@ -144,7 +166,8 @@ class ServicioNodos(pb_grpc.NodeServiceServicer):
 
     async def Register(self, request, context):
         await self._comprobar(context, request.node)
-        self.registro.registrar(request.node, request.zone, request.capacity_bytes, request.free_bytes)
+        self.registro.registrar(request.node, request.zone, request.capacity_bytes, request.free_bytes,
+                                ip_de(context.peer()))
         log.info("nodo de datos %s registrado (zona %s)", request.node, request.zone)
         clave = self.secretos.hmac_bloques
         return pb.RegisterResponse(heartbeat_interval_s=self.tiempos.latido_s, block_token_key=clave,

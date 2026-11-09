@@ -30,32 +30,42 @@ import grpc
 from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
 from dfsha.common import tokens
+from dfsha.common.config import OPCIONES_CANAL
 from dfsha.common.errores import abortar, motivo_de
 from dfsha.common.tls import es_nodo, identidad_par
 from dfsha.datanode.almacen import Almacen, BloqueNoEncontrado, HuellaIncorrecta, IdInvalido, validar_id
 
 log = logging.getLogger(__name__)
 _FIN = object()
+_EN_SEGUNDO_PLANO: set[asyncio.Task] = set()     # reenvíos que siguen después de responder
+CABECERA_PREVIAS = "dfsha-copias-previas"           # copias guardadas antes de este nodo en la cadena
 
 
 class Reenvio:
     """Reenvía los trozos de un bloque al siguiente nodo de la cadena mientras llegan.
 
-    Cada envío espera a la vez dos cosas: que haya lugar en la cola (contrapresión, pocos trozos
-    en memoria) o que la llamada al siguiente nodo termine. Si el siguiente nodo falla, se deja
-    de reenviar al instante, sin quedarse esperando una cola que nadie lee, y este nodo sigue
-    guardando su copia.
+    La cola no tiene límite (como mucho un bloque, 16 MiB), así un siguiente nodo lento no frena
+    a este ni a los anteriores. Si el siguiente nodo falla, se deja de reenviar al instante y este
+    nodo sigue guardando su copia.
+
+    Cada nodo sabe cuántas copias hay antes que él (cabecera dfsha-copias-previas). Mientras con la
+    suya no se llegue a W, espera la respuesta del siguiente sin atajos. El nodo que completa la
+    W-ésima copia espera a los siguientes solo un momento (gracia). Si no responden, contesta sin
+    ellos y les sigue enviando en segundo plano, y sus copias cuentan cuando avisen con BlockReceived.
+    Así el bloque se da por escrito con W copias sin esperar a una réplica lenta del final (D5).
     """
 
-    def __init__(self, canal: grpc.aio.Channel, siguiente: str, timeout_s: float, nodos_restantes: int):
+    def __init__(self, canal: grpc.aio.Channel, siguiente: str, timeout_s: float, nodos_restantes: int,
+                 copias_previas: int = 1):
         self.siguiente = siguiente
         self.timeout_s = timeout_s
         # El siguiente nodo puede tener que esperar a su vez a los que vienen detrás.
         self.timeout_resultado_s = timeout_s * (nodos_restantes + 1)
+        self.nodos_restantes = nodos_restantes
         self.fallo: str | None = None
-        self._cola: asyncio.Queue = asyncio.Queue(maxsize=4)
+        self._cola: asyncio.Queue = asyncio.Queue(maxsize=32)    # memoria acotada por bloque
         stub = pb_grpc.DataServiceStub(canal)
-        self._llamada = stub.WriteBlock(self._trozos())
+        self._llamada = stub.WriteBlock(self._trozos(), metadata=((CABECERA_PREVIAS, str(copias_previas)),))
         self._resultado = asyncio.ensure_future(self._esperar_resultado())
 
     async def _trozos(self):
@@ -85,17 +95,37 @@ class Reenvio:
         if not self.fallo:
             await self._poner(trozo)
 
-    async def terminar(self) -> list[str]:
-        """Espera la respuesta del siguiente nodo y devuelve los nodos que guardaron su copia."""
+    async def terminar(self, gracia_s: float | None) -> list[str]:
+        """Nodos que guardaron su copia más allá de este, según la respuesta del siguiente.
+
+        Si el siguiente no responde dentro de la gracia, devuelve [] y lo sigue esperando en
+        segundo plano hasta timeout_resultado_s. La gracia crece con los nodos que quedan detrás
+        del siguiente, porque cada uno de ellos puede usar a su vez su propia gracia.
+        """
+        gracia_s = self.timeout_resultado_s if gracia_s is None else gracia_s * (self.nodos_restantes + 1)
         if not self.fallo and await self._poner(_FIN):
             try:
-                resultado = await asyncio.wait_for(asyncio.shield(self._resultado), self.timeout_resultado_s)
+                resultado = await asyncio.wait_for(asyncio.shield(self._resultado), gracia_s)
                 return list(resultado.stored_on)
-            except (asyncio.TimeoutError, grpc.aio.AioRpcError) as e:
+            except asyncio.TimeoutError:
+                log.info("%s sigue recibiendo, se responde sin esperar su copia", self.siguiente)
+                tarea = asyncio.ensure_future(self._terminar_despues(gracia_s))
+                _EN_SEGUNDO_PLANO.add(tarea)
+                tarea.add_done_callback(_EN_SEGUNDO_PLANO.discard)
+                return []
+            except grpc.aio.AioRpcError as e:
                 self.fallo = self._describir(e)
                 self.cancelar()
         log.warning("cadena cortada después de este nodo: %s", self.fallo)
         return []
+
+    async def _terminar_despues(self, ya_esperado_s: float) -> None:
+        try:
+            r = await asyncio.wait_for(self._resultado, max(1.0, self.timeout_resultado_s - ya_esperado_s))
+            log.info("%s terminó en segundo plano, copias %s", self.siguiente, list(r.stored_on))
+        except (asyncio.TimeoutError, grpc.aio.AioRpcError, asyncio.CancelledError) as e:
+            log.warning("%s no terminó en segundo plano: %s", self.siguiente, self._describir(e))
+            self.cancelar()
 
     def cancelar(self) -> None:
         self._llamada.cancel()
@@ -111,10 +141,12 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
     def __init__(self, almacen: Almacen, nombre: str, tamano_trozo: int,
                  timeout_reenvio_s: float = 10.0,
                  credenciales_salida: grpc.ChannelCredentials | None = None,
-                 limite_peticiones: int = 64):
+                 limite_peticiones: int = 64, gracia_cadena_s: float = 1.0, confirmaciones: int = 2):
         self.almacen = almacen
         self.clave_tokens: bytes | None = None   # sin clave (desarrollo sin metadatos) no se verifica
         self.limite_peticiones = limite_peticiones
+        self.gracia_cadena_s = gracia_cadena_s
+        self.confirmaciones = confirmaciones
         self.en_curso = 0
         self.al_guardar = None                   # async (block_id, huella, tamaño)
         self.al_borrar = None                    # async (block_id)
@@ -128,9 +160,9 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
         """Canal reutilizable hacia otro nodo de datos (uno por destino)."""
         if destino not in self._canales:
             if self._credenciales is None:
-                self._canales[destino] = grpc.aio.insecure_channel(destino)
+                self._canales[destino] = grpc.aio.insecure_channel(destino, options=OPCIONES_CANAL)
             else:
-                self._canales[destino] = grpc.aio.secure_channel(destino, self._credenciales)
+                self._canales[destino] = grpc.aio.secure_channel(destino, self._credenciales, options=OPCIONES_CANAL)
         return self._canales[destino]
 
     async def cerrar(self) -> None:
@@ -178,10 +210,11 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
         except IdInvalido:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"id de bloque inválido {primero.block_id!r}")
 
+        previas = next((int(v) for k, v in context.invocation_metadata() or () if k == CABECERA_PREVIAS), 0)
         reenvio = None
         if primero.downstream_nodes:
             siguiente, *resto = primero.downstream_nodes
-            reenvio = Reenvio(self._canal(siguiente), siguiente, self.timeout_reenvio_s, len(resto))
+            reenvio = Reenvio(self._canal(siguiente), siguiente, self.timeout_reenvio_s, len(resto), previas + 1)
 
         trozo, secuencia = primero, 0
         try:
@@ -222,7 +255,9 @@ class ServicioDatos(pb_grpc.DataServiceServicer):
         self._aviso(self.al_guardar, primero.block_id, primero.block_checksum, escritura.tamano)
         guardado_en = [self.nombre]
         if reenvio:
-            guardado_en += await reenvio.terminar()
+            # sin la copia del siguiente no se llega a W: se le espera sin atajos
+            gracia = self.gracia_cadena_s if previas + 1 >= self.confirmaciones else None
+            guardado_en += await reenvio.terminar(gracia)
         log.info("bloque %s guardado (%d bytes), copias en %s", primero.block_id, escritura.tamano, guardado_en)
         return pb.WriteResult(block_id=primero.block_id, stored_on=guardado_en)
 

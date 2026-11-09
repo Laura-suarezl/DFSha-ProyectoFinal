@@ -24,6 +24,9 @@ from typing import Any, Mapping
 
 KIB, MIB, GIB = 1024, 1024 ** 2, 1024 ** 3
 LIMITE_MENSAJE_GRPC = 4 * MIB          # tamaño máximo por defecto de un mensaje gRPC
+# Entre servidores y desde el cliente se reintenta conectar como máximo cada 5 s (por defecto gRPC
+# espera hasta 120 s), así un nodo que vuelve se retoma enseguida
+OPCIONES_CANAL = [("grpc.initial_reconnect_backoff_ms", 500), ("grpc.max_reconnect_backoff_ms", 5000)]
 
 
 class ErrorDeConfiguracion(ValueError):
@@ -80,6 +83,7 @@ class Tiempos:
     sospechoso_s: int = 10
     muerto_s: int = 30
     timeout_replica_s: int = 3         # el cliente pasa a la siguiente réplica
+    gracia_cadena_s: float = 1.0       # espera por la copia del siguiente nodo de la cadena (D5)
     gracia_recolector_s: int = 60      # sin borrar bloques viejos tras un cambio de líder
     op_id_ttl_s: int = 3600            # vida del resultado de un commit (D3)
     jwt_ttl_s: int = 3600              # D8

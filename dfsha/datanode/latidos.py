@@ -21,13 +21,14 @@ import grpc
 
 from dfsha._gen import dfsha_pb2 as pb
 from dfsha._gen import dfsha_pb2_grpc as pb_grpc
-from dfsha.common.config import Configuracion
+from dfsha.common.config import OPCIONES_CANAL, Configuracion
 from dfsha.common.errores import motivo_de
 from dfsha.datanode.almacen import Almacen
 from dfsha.datanode.servicio import ServicioDatos
 
 log = logging.getLogger(__name__)
 PLAZO_S = 2.0
+COPIAS_SIMULTANEAS = 2      # re-replicación: cada copia tiene en memoria solo unos trozos
 
 
 class ClienteMetadatos:
@@ -39,12 +40,14 @@ class ClienteMetadatos:
         self.servicio = servicio
         puerto = cfg.cluster.puerto_metadatos_interno
         destinos = destinos or [f"{n.strip()}:{puerto}" for n in cfg.cluster.nodos_metadatos.split(",") if n.strip()]
-        self._canales = {d: (grpc.aio.secure_channel(d, credenciales) if credenciales else grpc.aio.insecure_channel(d))
+        self._canales = {d: (grpc.aio.secure_channel(d, credenciales, options=OPCIONES_CANAL) if credenciales
+                             else grpc.aio.insecure_channel(d, options=OPCIONES_CANAL))
                          for d in destinos}
         self._stubs = {d: pb_grpc.NodeServiceStub(c) for d, c in self._canales.items()}
         self._sin_registro = set(destinos)
         self._tareas: list[asyncio.Task] = []
         self._en_curso: set[str] = set()       # bloques con una orden de copia en marcha
+        self._copias = asyncio.Semaphore(COPIAS_SIMULTANEAS)
         servicio.al_guardar = self.avisar_guardado
         servicio.al_borrar = self.avisar_borrado
 
@@ -146,7 +149,14 @@ class ClienteMetadatos:
             return []
         self._en_curso.add(orden.block_id)
         try:
-            huella, _ = self.almacen.info(orden.block_id)
+            async with self._copias:
+                return await self._copiar(orden)
+        finally:
+            self._en_curso.discard(orden.block_id)
+
+    async def _copiar(self, orden: pb.ReplicateCommand) -> list[str]:
+        try:
+            huella, tamano = self.almacen.info(orden.block_id)
             if orden.block_checksum and huella != orden.block_checksum:
                 log.warning("orden de copia de %s con otra huella, no se copia", orden.block_id)
                 return []
@@ -154,10 +164,11 @@ class ClienteMetadatos:
             destinos = [t if ":" in t else f"{t}:{puerto}" for t in orden.targets]
             tamano_trozo = self.cfg.almacenamiento.tamano_trozo
 
-            def trozos():
-                datos = list(self.almacen.leer(orden.block_id, tamano_trozo)) or [b""]
-                for i, d in enumerate(datos):
-                    t = pb.ChunkPayload(sequence_number=i, data=d, is_last_chunk=i == len(datos) - 1)
+            def trozos():                         # se leen del disco a medida que se envían
+                cantidad = max(1, (tamano + tamano_trozo - 1) // tamano_trozo)
+                partes = self.almacen.leer(orden.block_id, tamano_trozo) if tamano else iter([b""])
+                for i, d in enumerate(partes):
+                    t = pb.ChunkPayload(sequence_number=i, data=d, is_last_chunk=i == cantidad - 1)
                     if i == 0:
                         t.block_id, t.block_checksum = orden.block_id, huella
                         t.downstream_nodes.extend(destinos[1:])
@@ -166,11 +177,10 @@ class ClienteMetadatos:
             r = await pb_grpc.DataServiceStub(self.servicio._canal(destinos[0])).WriteBlock(trozos(), timeout=60)
             log.info("bloque %s copiado a %s", orden.block_id, list(r.stored_on))
             return list(r.stored_on)
-        except grpc.aio.AioRpcError as e:
-            log.warning("copia de %s a %s falló: %s", orden.block_id, list(orden.targets), motivo_de(e))
+        except (grpc.aio.AioRpcError, KeyError) as e:
+            log.warning("copia de %s a %s falló: %s", orden.block_id, list(orden.targets),
+                        motivo_de(e) if isinstance(e, grpc.aio.AioRpcError) else "el bloque ya no está")
             return []
-        finally:
-            self._en_curso.discard(orden.block_id)
 
     # ------------------------------------------------------------ revisión e inventario
     async def revisar(self) -> list[str]:

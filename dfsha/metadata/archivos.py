@@ -229,11 +229,12 @@ class Archivos:
             raise ErrorDfsha(pb.REASON_FORBIDDEN, "el descriptor es de otro usuario")
         return info
 
-    def _ubicacion(self, b: dict, usuario: str) -> pb.BlockLocation:
+    def _ubicacion(self, b: dict, usuario: str, ip_cliente: str = "") -> pb.BlockLocation:
         puerto = self.n.cfg.cluster.puerto_datos
+        nodos = self.n.nodos
         return pb.BlockLocation(
             index=b["i"], block_id=b["id"], cipher_checksum=b["H"], plain_checksum=b["h"], size=b["t"],
-            replicas=[f"{n}:{puerto}" for n in self.n.nodos.ubicaciones(b["id"], b["H"])],
+            replicas=[f"{n}:{puerto}" for n in nodos.ordenar(nodos.ubicaciones(b["id"], b["H"]), ip_cliente)],
             access_token=tokens.emitir(self.n.autenticador.secretos.hmac_bloques, b["id"], tokens.LEER, usuario,
                                        self.n.cfg.tiempos.token_bloque_ttl_s))
 
@@ -250,7 +251,7 @@ class Archivos:
                 "hash": HUELLA_VACIA, "clave": clave, "modificado": _ahora_ms()})),
             self.cli.op_poner(self.k("manifests", fid, 0), json.dumps({"bloques": []}))])
 
-    async def abrir(self, usuario: str, ruta: str, modo: int, session_id: str) -> pb.OpenResponse:
+    async def abrir(self, usuario: str, ruta: str, modo: int, session_id: str, ip_cliente: str = "") -> pb.OpenResponse:
         if modo not in (LEER, ESCRIBIR, ANEXAR, LEER_ESCRIBIR):
             raise ErrorDfsha(None, "modo de apertura inválido")
         lease = await self._sesion(usuario, session_id)
@@ -278,7 +279,7 @@ class Archivos:
             fd=fd, file_id=fid, version=archivo["version"], size=archivo["tamano"], block_size=archivo["bloque"],
             file_checksum=archivo["hash"], read_lease_s=self.n.cfg.tiempos.sesion_ttl_s,
             file_key=await self.n.envoltorio.desenvolver(base64.b64decode(archivo["clave"])),
-            blocks=[self._ubicacion(b, usuario) for b in manifiesto["bloques"]])
+            blocks=[self._ubicacion(b, usuario, ip_cliente) for b in manifiesto["bloques"]])
         if modo == ESCRIBIR:
             try:
                 respuesta.locks.append(await self._tomar(fid, sesion, lease, pb.LockTarget(whole_file=True),
@@ -288,12 +289,13 @@ class Archivos:
                 raise
         return respuesta
 
-    async def ubicaciones(self, usuario: str, fd: str, primero: int, ultimo: int) -> pb.BlockLocations:
+    async def ubicaciones(self, usuario: str, fd: str, primero: int, ultimo: int,
+                          ip_cliente: str = "") -> pb.BlockLocations:
         info = await self.descriptor(usuario, fd)
         manifiesto, _ = await self._json(self.k("manifests", info["archivo"], info["version"]))
         if manifiesto is None:
             raise ErrorDfsha(pb.REASON_NOT_FOUND, "la versión ya no existe")
-        return pb.BlockLocations(blocks=[self._ubicacion(b, usuario) for b in manifiesto["bloques"]
+        return pb.BlockLocations(blocks=[self._ubicacion(b, usuario, ip_cliente) for b in manifiesto["bloques"]
                                          if primero <= b["i"] <= ultimo])
 
     async def asignar(self, usuario: str, fd: str, indices: list[int]) -> pb.AllocateBlocksResponse:
@@ -317,15 +319,16 @@ class Archivos:
             fallido = next((n for n in previo["cadena"] if n not in con_copia), None)
             if fallido:
                 fallidos.setdefault(previo["i"], set()).add(fallido)
-        cadena = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas)
-        if len(cadena) < cfg.almacenamiento.confirmaciones:
+        w = cfg.almacenamiento.confirmaciones
+        cadena = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas, minimo=w)
+        if len(cadena) < w:
             raise ErrorDfsha(pb.REASON_NO_SPACE, "no hay suficientes nodos de datos vivos")
         clave = self.n.autenticador.secretos.hmac_bloques
         respuesta, operaciones = pb.AllocateBlocksResponse(), []
         for j, indice in enumerate(indices):
             rotada = cadena[j % len(cadena):] + cadena[:j % len(cadena)]
             if fallidos.get(indice):
-                otra = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas, excluir=fallidos[indice])
+                otra = self.n.nodos.elegir_cadena(cfg.almacenamiento.replicas, excluir=fallidos[indice], minimo=w)
                 rotada = otra if len(otra) >= cfg.almacenamiento.confirmaciones else rotada
             direcciones = [f"{rotada[0]}:{cfg.cluster.puerto_datos}"] + [f"{n}:{cfg.cluster.puerto_datos_interno}"
                                                                         for n in rotada[1:]]

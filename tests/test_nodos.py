@@ -211,3 +211,57 @@ async def _error(llamada):
     with pytest.raises(grpc.aio.AioRpcError) as e:
         await llamada
     return e.value
+
+
+def test_replicas_ordenadas_por_estado_y_cercania():
+    ahora = [0.0]
+    r = RegistroNodos(Tiempos(), reloj=lambda: ahora[0])
+    r.registrar("dn1", "a", 100, 50, "10.20.1.21")
+    r.registrar("dn2", "b", 100, 50, "10.20.2.21")
+    r.registrar("dn3", "c", 100, 50, "10.20.3.21")
+    assert r.ordenar(["dn1", "dn2", "dn3"], "10.20.2.31") == ["dn2", "dn1", "dn3"]   # misma subred primero
+    ahora[0] = 11
+    r.latido("dn1", 50, 50, 0)
+    r.latido("dn3", 50, 50, 0)
+    assert r.ordenar(["dn1", "dn2", "dn3"], "10.20.2.31")[-1] == "dn2"              # sospechoso al final
+
+
+class ColaLenta(pb_grpc.DataServiceServicer):
+    """Último nodo de la cadena que recibe muy despacio (réplica lenta)."""
+
+    async def WriteBlock(self, request_iterator, context):
+        async for _ in request_iterator:
+            await asyncio.sleep(1.0)
+        return pb.WriteResult(block_id=ID, stored_on=["lento"])
+
+
+async def test_cadena_no_espera_a_la_replica_lenta(tmp_path):
+    servidores, destinos = [], []
+    for i in (1, 2):
+        s = ServicioDatos(Almacen(tmp_path / f"dn{i}"), f"dn{i}", 64 * 1024, timeout_reenvio_s=10, gracia_cadena_s=0.5)
+        srv = grpc.aio.server()
+        pb_grpc.add_DataServiceServicer_to_server(s, srv)
+        destinos.append(f"127.0.0.1:{srv.add_insecure_port('127.0.0.1:0')}")
+        servidores.append(srv)
+    lento = grpc.aio.server()
+    pb_grpc.add_DataServiceServicer_to_server(ColaLenta(), lento)
+    destinos.append(f"127.0.0.1:{lento.add_insecure_port('127.0.0.1:0')}")
+    for srv in servidores + [lento]:
+        await srv.start()
+    datos = os.urandom(512 * 1024)                    # 8 trozos: la cola lenta tardaría 8 s
+
+    def trozos():
+        partes = [datos[i:i + 64 * 1024] for i in range(0, len(datos), 64 * 1024)]
+        for n, parte in enumerate(partes):
+            t = pb.ChunkPayload(sequence_number=n, data=parte, is_last_chunk=n == len(partes) - 1)
+            if n == 0:
+                t.block_id, t.block_checksum = ID, hashlib.sha256(datos).hexdigest()
+                t.downstream_nodes.extend(destinos[1:])
+            yield t
+    async with grpc.aio.insecure_channel(destinos[0]) as c:
+        inicio = asyncio.get_running_loop().time()
+        r = await pb_grpc.DataServiceStub(c).WriteBlock(trozos())
+        demora = asyncio.get_running_loop().time() - inicio
+    assert list(r.stored_on) == ["dn1", "dn2"] and demora < 4      # W = 2 sin esperar a la lenta
+    for srv in servidores + [lento]:
+        await srv.stop(None)

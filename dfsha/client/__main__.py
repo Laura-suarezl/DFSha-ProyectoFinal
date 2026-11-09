@@ -161,7 +161,7 @@ def put(local: Path, remoto: str = typer.Argument(None)):
     """Sube un archivo local (RF2)."""
     async def f(c, e):
         destino = _ruta(e, remoto or local.name)
-        r = await c.put(local.read_bytes(), destino)
+        r = await c.put(local, destino)
         typer.echo(f"{destino} versión {r.version} huella {r.file_checksum}")
     _ejecutar(f)
 
@@ -171,10 +171,9 @@ def get(remoto: str, local: Path = typer.Argument(None)):
     """Descarga un archivo (RF2)."""
     async def f(c, e):
         origen = _ruta(e, remoto)
-        datos = await c.get(origen)
         destino = local or Path(origen.rsplit("/", 1)[-1])
-        destino.write_bytes(datos)
-        typer.echo(f"{origen} -> {destino} ({len(datos)} bytes)")
+        await c.get(origen, destino)
+        typer.echo(f"{origen} -> {destino} ({destino.stat().st_size} bytes)")
     _ejecutar(f)
 
 
