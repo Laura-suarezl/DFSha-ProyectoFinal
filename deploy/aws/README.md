@@ -18,8 +18,8 @@ Los ids de los recursos quedan en `deploy/aws/out/estado.env`, que no se sube al
 bash deploy/aws/crear_infraestructura.sh
 bash deploy/aws/subir_artefactos.sh
 bash deploy/aws/crear_instancias.sh
-bash deploy/aws/ssh.sh mds1 "sudo docker exec -it dfsha-metadatos-1 python -m dfsha.metadata crear-admin --usuario admin"
-bash deploy/aws/ssh.sh cliente2 "cd /opt/dfsha && sudo docker compose exec cliente dfsha login admin"
+bash deploy/aws/ssh.sh mds1 "sudo docker exec -e DFSHA_CONTRASENA='<contraseña>' dfsha-metadatos-1 python -m dfsha.metadata crear-admin --usuario admin"
+bash deploy/aws/ssh.sh cliente2 "cd /opt/dfsha && sudo docker compose exec -T -e DFSHA_CONTRASENA='<contraseña>' cliente dfsha login admin"
 ```
 
 **Nota:** el laboratorio apaga las instancias al cerrar la sesión. Al volver, los contenedores arrancan solos. La IP pública del bastión cambia, y `ssh.sh` la consulta cada vez. Si cambia la IP pública de quien despliega, se borra la línea `REGLAS` de `estado.env` y se vuelve a ejecutar `crear_infraestructura.sh` para abrir el SSH a la IP nueva.

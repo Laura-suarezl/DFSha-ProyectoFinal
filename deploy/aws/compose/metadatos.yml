@@ -43,3 +43,4 @@ services:
       DFSHA_ETCD_DESTINO: dns:///dfsha.internal:2379
       DFSHA_KMS_CLAVE: alias/dfsha-kek
       DFSHA_KMS_REGION: us-east-1
+      DFSHA_ALMACENAMIENTO_REPLICAS: ${REPLICAS:-3}

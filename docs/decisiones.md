@@ -222,7 +222,7 @@ Origen de cada decisión: L y T identifican los dos diseños individuales de la 
 - **Amenazas.** Una sola tabla STRIDE con las amenazas de ambos diseños y las mitigaciones de D8.
 - **Fuentes.** El código fuente de todos los diagramas (scripts de L y fuentes de los C4 de T) va en docs/diagramas/ del repositorio.
 - **Informe.** Matriz comparativa breve, arquitectura acordada, cambios frente a cada diseño individual (columna "Origen" de este registro), APIs y algoritmos, despliegue, pruebas con la tabla de D11, resultados, limitaciones y tabla de contribuciones. El Word sigue las reglas de estilo de Laura y el README va en Markdown.
-- **Contribuciones.** Commits con la cuenta de cada integrante y tabla de quién hizo qué en el informe y el README.
+- **Contribuciones.** Commits con la cuenta de cada integrante, que el historial del repositorio muestra, y tabla de quién hizo qué en el informe.
 
 **Por qué.** Más vistas no recortan nada, pero dos diagramas de componentes distintos serían incoherentes, por eso se fusionan en uno. STRIDE (T) da una estructura más sistemática a la tabla de amenazas de L.
 
